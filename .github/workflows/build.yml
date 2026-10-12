@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+
+      # 云端自动生成 android/ 脚手架（本机无需 Flutter/Android SDK）
+      - name: 生成平台脚手架
+        run: |
+          flutter create --project-name music_sync --platforms=android .
+          dart tool/patch_android_manifest.dart
+          flutter pub get
+
+      - name: 构建 APK
+        run: flutter build apk --release
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: music_sync_android
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+
+      - name: 生成平台脚手架
+        run: |
+          flutter create --project-name music_sync --platforms=windows .
+          flutter pub get
+
+      - name: 构建 Windows
+        run: flutter build windows --release
+
+      - name: 上传 Windows 程序
+        uses: actions/upload-artifact@v4
+        with:
+          name: music_sync_windows
+          path: build/windows/x64/runner/Release
