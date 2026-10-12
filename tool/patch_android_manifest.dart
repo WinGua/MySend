@@ -22,24 +22,17 @@ void main() {
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
 ''';
 
-  // 在 <application ...> 之前插入权限声明
-  final appMarker = '<application';
-  final appIdx = content.indexOf(appMarker);
-  if (appIdx == -1) {
-    stderr.writeln('未找到 <application 标记');
-    exit(1);
-  }
+  // 1. 在 <application 之前插入权限声明
   if (!content.contains('MANAGE_EXTERNAL_STORAGE')) {
-    content = content.replaceFirst(appMarker, '$permissions$appMarker');
+    content = content.replaceFirst('<application', '$permissions<application');
   }
 
-  // 在 <application> 起始标签内补充属性
-  const appAttrs = 'android:usesCleartextTraffic="true"';
+  // 2. 为 <application> 起始标签补充 android:usesCleartextTraffic="true"
   if (!content.contains('usesCleartextTraffic')) {
-    final gt = content.indexOf('>', appIdx);
-    if (gt != -1) {
-      content = content.replaceRange(gt, gt, ' $appAttrs');
-    }
+    content = content.replaceFirst(
+      '<application',
+      '<application android:usesCleartextTraffic="true"',
+    );
   }
 
   file.writeAsStringSync(content);
