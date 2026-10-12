@@ -1,4 +1,3 @@
-import 'package:flutter/widgets.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 
 import '../../app_scope.dart';
@@ -222,7 +221,7 @@ class _HomePageState extends State<HomePage> {
   Widget _deviceCard(String deviceName, int transferPort) {
     return Row(
       children: [
-        const Icon(FluentIcons.devices, size: 28),
+        const Icon(FluentIcons.devices2, size: 28),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -242,7 +241,7 @@ class _HomePageState extends State<HomePage> {
         if (isSender)
           Icon(
             scope.server?.running == true
-                ? FluentIcons.radioButton
+                ? FluentIcons.radio_bullet
                 : FluentIcons.warning,
             size: 20,
           ),
@@ -257,7 +256,7 @@ class _HomePageState extends State<HomePage> {
       child: _card(
         Row(
           children: [
-            Icon(d.isSender ? FluentIcons.desktop : FluentIcons.phone, size: 24),
+            Icon(d.isSender ? FluentIcons.t_v_monitor : FluentIcons.phone, size: 24),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
