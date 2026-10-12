@@ -42,7 +42,7 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() {});
   }
 
-  void _log(String m) {
+  void _addLog(String m) {
     final t = DateTime.now();
     final ts = '${t.hour.toString().padLeft(2, '0')}:'
         '${t.minute.toString().padLeft(2, '0')}:'
@@ -58,7 +58,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _compare(SyncMapping m) async {
     final peer = _peer;
     if (peer == null) {
-      _log('请先在「可用的发送设备」中选择一台电脑');
+      _addLog('请先在「可用的发送设备」中选择一台电脑');
       return;
     }
     setState(() => _comparing[m.id] = true);
@@ -74,10 +74,10 @@ class _HomePageState extends State<HomePage> {
         includeChanged: scope.config.config.syncChangedFiles,
       );
       if (mounted) setState(() => _plans[m.id] = plan);
-      _log('「${m.name}」对比完成：新增 ${plan.newOnly.length}，'
+      _addLog('「${m.name}」对比完成：新增 ${plan.newOnly.length}，'
           '变更 ${plan.changedOnly.length}');
     } catch (e) {
-      _log('「${m.name}」对比失败: $e');
+      _addLog('「${m.name}」对比失败: $e');
     } finally {
       if (mounted) setState(() => _comparing[m.id] = false);
     }
@@ -96,7 +96,7 @@ class _HomePageState extends State<HomePage> {
         files: plan.toSend,
         onProgress: (done, total, current) {
           if (mounted) setState(() {});
-          _log('($done/$total) ${current.relativePath}');
+          _addLog('($done/$total) ${current.relativePath}');
         },
       );
       if (mounted) {
@@ -109,9 +109,9 @@ class _HomePageState extends State<HomePage> {
         );
         setState(() => _plans[m.id] = cleared);
       }
-      _log('「${m.name}」同步完成，本次共 ${plan.toSend.length} 个文件');
+      _addLog('「${m.name}」同步完成，本次共 ${plan.toSend.length} 个文件');
     } catch (e) {
-      _log('「${m.name}」同步失败: $e');
+      _addLog('「${m.name}」同步失败: $e');
     } finally {
       if (mounted) setState(() => _syncing[m.id] = false);
     }
@@ -158,7 +158,7 @@ class _HomePageState extends State<HomePage> {
                 manual: true,
               );
               setState(() {});
-              _log('已手动添加发送端 $address:$p');
+              _addLog('已手动添加发送端 $address:$p');
             },
           ),
         ],
@@ -273,7 +273,7 @@ class _HomePageState extends State<HomePage> {
                 child: Text(selected ? '已选择' : '选择'),
                 onPressed: () {
                   setState(() => _peer = d);
-                  _log('已选择发送端 ${d.name} (${d.address}:${d.port})');
+                  _addLog('已选择发送端 ${d.name} (${d.address}:${d.port})');
                 },
               ),
           ],
