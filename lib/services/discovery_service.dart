@@ -13,7 +13,7 @@ import '../models/device_info.dart';
 /// 说明：组播（multicast）在部分 Android 上需要额外的 WifiManager MulticastLock，
 /// 且路由器的组播转发行为千差万别。这里改用更稳的 UDP 广播（255.255.255.255，
 /// 并额外向每个本机 IPv4 网段的 /24 广播地址发送），对家庭局域网覆盖更可靠；
-/// 无法广播到的场景，UI 提供「手动输入 IP」兜底。
+/// 无法广播到的场景，UI 提供「手动输入 IP」兑底。
 class DiscoveryService extends ChangeNotifier {
   final String deviceId;
   final String deviceName;
@@ -74,7 +74,7 @@ class DiscoveryService extends ChangeNotifier {
     _announceTimer?.cancel();
     _announceTimer = null;
     try {
-      await _socket?.close();
+      _socket?.close();
     } catch (_) {}
     _socket = null;
     _devices.clear();
