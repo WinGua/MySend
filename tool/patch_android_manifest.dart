@@ -49,7 +49,18 @@ void main() {
     content = content.replaceRange(gt, gt, ' android:usesCleartextTraffic="true"');
   }
 
-  // 设置应用显示名称为 MySend。
+  // 3. 让应用内容延伸到刘海/挖孔区域（shortEdges），避免顶部黑边。
+  if (!content.contains('windowLayoutInDisplayCutoutMode')) {
+    final actStart = content.indexOf('<activity');
+    if (actStart != -1) {
+      final actGt = content.indexOf('>', actStart);
+      if (actGt != -1) {
+        content = content.replaceRange(actGt, actGt, ' android:windowLayoutInDisplayCutoutMode="shortEdges"');
+      }
+    }
+  }
+
+  // 4. 设置应用显示名称为 MySend。
   content = content.replaceFirst(RegExp('android:label="[^"]*"'), 'android:label="MySend"');
 
   file.writeAsStringSync(content);

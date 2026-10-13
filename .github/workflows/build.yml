@@ -49,6 +49,7 @@ jobs:
       - name: 生成平台脚手架
         run: |
           flutter create --project-name music_sync --platforms=windows .
+          dart tool/patch_windows.dart
           Copy-Item -Force assets/icons/windows/app_icon.ico windows/runner/resources/app_icon.ico
           flutter pub get
 
