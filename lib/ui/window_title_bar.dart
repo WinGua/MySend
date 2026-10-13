@@ -27,7 +27,7 @@ class WindowTitleBar extends StatelessWidget {
                 child: Padding(
                   padding: EdgeInsets.only(left: 16),
                   child: Text(
-                    '音乐同步',
+                    'MySend',
                     style: TextStyle(fontSize: 13, color: Color(0xFF9a9a9a)),
                   ),
                 ),

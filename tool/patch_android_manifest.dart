@@ -22,18 +22,28 @@ void main() {
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
 ''';
 
-  // 1. 在 <application 之前插入权限声明
+  // 在 <application ...> 之前插入权限声明
+  final appMarker = '<application';
+  final appIdx = content.indexOf(appMarker);
+  if (appIdx == -1) {
+    stderr.writeln('未找到 <application 标记');
+    exit(1);
+  }
   if (!content.contains('MANAGE_EXTERNAL_STORAGE')) {
-    content = content.replaceFirst('<application', '$permissions<application');
+    content = content.replaceFirst(appMarker, '$permissions$appMarker');
   }
 
-  // 2. 为 <application> 起始标签补充 android:usesCleartextTraffic="true"
+  // 在 <application> 起始标签内补充属性
+  const appAttrs = 'android:usesCleartextTraffic="true"';
   if (!content.contains('usesCleartextTraffic')) {
-    content = content.replaceFirst(
-      '<application',
-      '<application android:usesCleartextTraffic="true"',
-    );
+    final gt = content.indexOf('>', appIdx);
+    if (gt != -1) {
+      content = content.replaceRange(gt, gt, ' $appAttrs');
+    }
   }
+
+  // 设置应用显示名称为 MySend。
+  content = content.replaceFirst(RegExp('android:label="[^"]*"'), 'android:label="MySend"');
 
   file.writeAsStringSync(content);
   stdout.writeln('AndroidManifest 补丁完成');

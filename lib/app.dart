@@ -9,7 +9,7 @@ class MusicSyncApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FluentApp(
-      title: '音乐同步',
+      title: 'MySend',
       theme: AppTheme.dark(),
       debugShowCheckedModeBanner: false,
       home: const Shell(),

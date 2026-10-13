@@ -24,6 +24,7 @@ jobs:
         run: |
           flutter create --project-name music_sync --platforms=android .
           dart tool/patch_android_manifest.dart
+          cp -r assets/icons/android/mipmap-* android/app/src/main/res/
           flutter pub get
 
       - name: 构建 APK
@@ -32,7 +33,7 @@ jobs:
       - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
-          name: music_sync_android
+          name: my_send_android
           path: build/app/outputs/flutter-apk/app-release.apk
 
   windows:
@@ -48,6 +49,7 @@ jobs:
       - name: 生成平台脚手架
         run: |
           flutter create --project-name music_sync --platforms=windows .
+          Copy-Item -Force assets/icons/windows/app_icon.ico windows/runner/resources/app_icon.ico
           flutter pub get
 
       - name: 构建 Windows
@@ -56,5 +58,5 @@ jobs:
       - name: 上传 Windows 程序
         uses: actions/upload-artifact@v4
         with:
-          name: music_sync_windows
+          name: my_send_windows
           path: build/windows/x64/runner/Release

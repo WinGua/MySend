@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
 import 'package:window_manager/window_manager.dart';
 
@@ -9,6 +10,11 @@ import 'core/utils.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 安卓端隐藏系统状态栏 / 导航栏（沉浸式）。
+  if (isAndroid) {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
 
   scope = AppScope();
   await scope.config.load();
@@ -30,6 +36,7 @@ Future<void> _initWindow() async {
       center: true,
       backgroundColor: Colors.transparent,
       titleBarStyle: TitleBarStyle.hidden,
+      title: 'MySend',
     );
     windowManager.waitUntilReadyToShow(options, () async {
       await windowManager.show();
