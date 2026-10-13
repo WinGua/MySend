@@ -11,7 +11,8 @@ import 'core/utils.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 安卓端：先 edgeToEdge 铺满到状态栏/挖孔区域，再隐藏系统栏，兼顾「没黑边 + 状态栏不显示」。
+  // 安卓端：edgeToEdge 先把内容铺满到状态栏/挖孔区域；隐藏状态栏改走原生 MethodChannel，
+  // 避免在 Dart 侧切换 SystemUiMode 触发 OriginOS 的窗口重排、把挖孔铺满覆盖回顶部黑边。
   if (isAndroid) {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(
@@ -21,13 +22,8 @@ Future<void> main() async {
         statusBarIconBrightness: Brightness.light,
       ),
     );
-    // 首帧后仅隐藏顶部状态栏：用 manual 模式而非 immersiveSticky，
-    // 避免切换到 immersive 触发窗口重排、把 edgeToEdge 的挖孔铺满覆盖回顶部黑边。
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      SystemChrome.setEnabledSystemUIMode(
-        SystemUiMode.manual,
-        overlays: [SystemUiOverlay.bottom],
-      );
+      MethodChannel('mysend/status_bar').invokeMethod('hideStatusBar');
     });
   }
 

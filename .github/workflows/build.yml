@@ -24,6 +24,7 @@ jobs:
         run: |
           flutter create --project-name music_sync --platforms=android .
           dart tool/patch_android_manifest.dart
+          dart tool/patch_android_kotlin.dart
           cp -r assets/icons/android/mipmap-* android/app/src/main/res/
           flutter pub get
 
