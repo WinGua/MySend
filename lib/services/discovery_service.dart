@@ -13,7 +13,7 @@ import '../models/device_info.dart';
 /// 说明：组播（multicast）在部分 Android 上需要额外的 WifiManager MulticastLock，
 /// 且路由器的组播转发行为千差万别。这里改用更稳的 UDP 广播（255.255.255.255，
 /// 并额外向每个本机 IPv4 网段的 /24 广播地址发送），对家庭局域网覆盖更可靠；
-/// 无法广播到的场景，UI 提供「手动输入 IP」兑底。
+/// 无法广播到的场景，UI 提供「手动输入 IP」兜底。
 class DiscoveryService extends ChangeNotifier {
   final String deviceId;
   final String deviceName;
@@ -23,6 +23,7 @@ class DiscoveryService extends ChangeNotifier {
   final Map<String, PeerDevice> _devices = {};
   RawDatagramSocket? _socket;
   Timer? _announceTimer;
+  Timer? _cleanupTimer;
 
   DiscoveryService({
     required this.deviceId,
@@ -52,7 +53,7 @@ class DiscoveryService extends ChangeNotifier {
       _announceTimer = Timer.periodic(const Duration(seconds: 3), (_) => _announce());
 
       // 定期清理长时间无心跳的设备。
-      Timer.periodic(const Duration(seconds: 10), (_) {
+      _cleanupTimer = Timer.periodic(const Duration(seconds: 10), (_) {
         final now = DateTime.now();
         final expired = _devices.values
             .where((d) => !d.manual && now.difference(d.lastSeen).inSeconds > 15)
@@ -73,6 +74,8 @@ class DiscoveryService extends ChangeNotifier {
   Future<void> stop() async {
     _announceTimer?.cancel();
     _announceTimer = null;
+    _cleanupTimer?.cancel();
+    _cleanupTimer = null;
     try {
       _socket?.close();
     } catch (_) {}
@@ -108,6 +111,7 @@ class DiscoveryService extends ChangeNotifier {
       final peer = PeerDevice.fromEnvelope(json, datagram.address.address);
       if (peer.id.isEmpty || peer.id == deviceId) return; // 跳过自己/无效
       _devices[peer.id] = peer;
+      notifyListeners();
     } catch (_) {
       // 忽略无法解析的报文。
     }

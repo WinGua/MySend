@@ -27,13 +27,13 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    scope.discovery?.addListener(_refresh);
+    scope.addListener(_refresh);
     scope.config.addListener(_refresh);
   }
 
   @override
   void dispose() {
-    scope.discovery?.removeListener(_refresh);
+    scope.removeListener(_refresh);
     scope.config.removeListener(_refresh);
     super.dispose();
   }
@@ -171,35 +171,40 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final cfg = scope.config.config;
-    return ListView(
-      padding: const EdgeInsets.all(24),
-      children: [
-        _sectionTitle('本机'),
-        _card(_deviceCard(cfg.deviceName, cfg.transferPort)),
-        const SizedBox(height: 24),
-        _sectionTitle(isSender ? '已发现的接收设备' : '可用的发送设备'),
-        for (final d in scope.discovery?.devices ?? const <PeerDevice>[])
-          _deviceRow(d),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Button(
-            child: const Text('手动添加设备'),
-            onPressed: _addManual,
-          ),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            _sectionTitle('本机'),
+            _card(_deviceCard(cfg.deviceName, cfg.transferPort)),
+            const SizedBox(height: 24),
+            _sectionTitle(isSender ? '已发现的接收设备' : '可用的发送设备'),
+            for (final d in scope.discovery?.devices ?? const <PeerDevice>[])
+              _deviceRow(d),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Button(
+                child: const Text('手动添加设备'),
+                onPressed: _addManual,
+              ),
+            ),
+            if (!isSender) ...[
+              const SizedBox(height: 24),
+              _sectionTitle('同步任务'),
+              if (cfg.mappings.isEmpty)
+                const Text('尚未配置映射，请到「映射」页添加。')
+              else
+                for (final m in cfg.mappings) _mappingRow(m),
+            ],
+            const SizedBox(height: 24),
+            _sectionTitle('日志'),
+            _card(_logPanel()),
+          ],
         ),
-        if (!isSender) ...[
-          const SizedBox(height: 24),
-          _sectionTitle('同步任务'),
-          if (cfg.mappings.isEmpty)
-            const Text('尚未配置映射，请到「映射」页添加。')
-          else
-            for (final m in cfg.mappings) _mappingRow(m),
-        ],
-        const SizedBox(height: 24),
-        _sectionTitle('日志'),
-        _card(_logPanel()),
-      ],
+      ),
     );
   }
 
@@ -310,10 +315,24 @@ class _HomePageState extends State<HomePage> {
               children: [
                 const Icon(FluentIcons.folder, size: 20),
                 const SizedBox(width: 8),
-                Text(m.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                const Spacer(),
-                Text(status,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFFc0c0c0))),
+                Expanded(
+                  child: Text(
+                    m.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Text(
+                    status,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: const TextStyle(fontSize: 12, color: Color(0xFFc0c0c0)),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 8),

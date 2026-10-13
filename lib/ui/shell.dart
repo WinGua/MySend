@@ -34,7 +34,13 @@ class _ShellState extends State<Shell> {
     ];
     return Column(
       children: [
-        Expanded(child: pages[_index]),
+        Expanded(
+          child: SafeArea(
+            top: true,
+            bottom: false,
+            child: pages[_index],
+          ),
+        ),
         _buildBottomBar(),
       ],
     );

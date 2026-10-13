@@ -1,10 +1,12 @@
+import 'package:flutter/foundation.dart';
+
 import 'core/utils.dart';
 import 'services/discovery_service.dart';
 import 'services/transfer/sender_server.dart';
 import 'storage/config_repository.dart';
 
 /// 全局服务容器：封装配置、发现、发送端服务，供各处单例访问。
-class AppScope {
+class AppScope extends ChangeNotifier {
   final ConfigRepository config = ConfigRepository();
   DiscoveryService? discovery;
   SenderServer? server;
@@ -20,6 +22,7 @@ class AppScope {
       isSender: isSender,
       transferPort: cfg.transferPort,
     );
+    discovery!.addListener(notifyListeners);
     await discovery!.start();
 
     if (isSender) {
@@ -31,9 +34,12 @@ class AppScope {
       );
       await server!.start();
     }
+
+    notifyListeners();
   }
 
   Future<void> stopServices() async {
+    discovery?.removeListener(notifyListeners);
     await discovery?.stop();
     await server?.stop();
     discovery = null;

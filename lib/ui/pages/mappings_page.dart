@@ -61,31 +61,36 @@ class _MappingsPageState extends State<MappingsPage> {
   @override
   Widget build(BuildContext context) {
     final mappings = scope.config.config.mappings;
-    return ListView(
-      padding: const EdgeInsets.all(24),
-      children: [
-        const Text('路径映射',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
-        const Text(
-          '每一组映射用「名称」把电脑与手机上的目录配对。电脑端填源目录，'
-          '手机端填目标目录，两端名称保持一致即可。',
-          style: TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            const Text('路径映射',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            const Text(
+              '每一组映射用「名称」把电脑与手机上的目录配对。电脑端填源目录，'
+              '手机端填目标目录，两端名称保持一致即可。',
+              style: TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
+            ),
+            const SizedBox(height: 16),
+            if (mappings.isEmpty)
+              const Text('还没有映射，点击下方「添加映射」开始。')
+            else
+              for (final m in mappings) _mappingTile(m),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton(
+                child: const Text('添加映射'),
+                onPressed: () => _openForm(),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 16),
-        if (mappings.isEmpty)
-          const Text('还没有映射，点击下方「添加映射」开始。')
-        else
-          for (final m in mappings) _mappingTile(m),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            child: const Text('添加映射'),
-            onPressed: () => _openForm(),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -113,6 +118,8 @@ class _MappingsPageState extends State<MappingsPage> {
                       style: const TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text('$roleLabel：${usedPath.isEmpty ? '（未填写）' : usedPath}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
                 ],
               ),

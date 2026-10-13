@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
 import 'package:window_manager/window_manager.dart';
 
@@ -10,22 +9,6 @@ import 'core/utils.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 安卓端：edgeToEdge 先把内容铺满到状态栏/挖孔区域；隐藏状态栏改走原生 MethodChannel，
-  // 避免在 Dart 侧切换 SystemUiMode 触发 OriginOS 的窗口重排、把挖孔铺满覆盖回顶部黑边。
-  if (isAndroid) {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        systemNavigationBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
-      ),
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      MethodChannel('mysend/status_bar').invokeMethod('hideStatusBar');
-    });
-  }
 
   scope = AppScope();
   await scope.config.load();
