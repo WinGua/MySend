@@ -11,16 +11,20 @@ import 'core/utils.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 安卓端边到边显示：内容延伸到状态栏/刘海区域，状态栏透明。
-  // 相比 immersiveSticky，edgeToEdge 对挖孔屏和 Android 15+ 兼容性更好。
+  // 安卓端：先 edgeToEdge 铺满到状态栏/挖孔区域，再隐藏系统栏，兼顾「没黑边 + 状态栏不显示」。
   if (isAndroid) {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
       ),
     );
+    // 首帧后再隐藏系统栏，让 edgeToEdge 的挖孔布局先稳定，避免退回顶部黑边。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    });
   }
 
   scope = AppScope();
