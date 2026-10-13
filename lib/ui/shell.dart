@@ -6,7 +6,7 @@ import 'pages/mappings_page.dart';
 import 'pages/settings_page.dart';
 import 'window_title_bar.dart';
 
-/// 应用导航外壳（Win11 风格侧边栏）。
+/// 应用导航外壳（Win11 风格侧边栏，手机端自动切换为底部导航）。
 class Shell extends StatefulWidget {
   const Shell({super.key});
 
@@ -20,15 +20,33 @@ class _ShellState extends State<Shell> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    // 响应式导航，兼顾手机 / 平板 / 桌面：
-    //   < 640       手机          → minimal（仅汉堡按钮，点开展开，不挤占内容区）
+    // 手机（窄屏）没有侧边栏空间，改用底部导航；平板 / 桌面用侧边栏。
+    if (width < 640) return _buildMobile();
+    return _buildDesktop(width);
+  }
+
+  /// 手机端：内容区 + 底部导航（状态 / 映射 / 设置）。
+  Widget _buildMobile() {
+    const pages = <Widget>[
+      HomePage(),
+      MappingsPage(),
+      SettingsPage(),
+    ];
+    return Column(
+      children: [
+        Expanded(child: pages[_index]),
+        _buildBottomBar(),
+      ],
+    );
+  }
+
+  /// 平板 / 桌面端：Win11 风格侧边栏。
+  Widget _buildDesktop(double width) {
     //   640 – 1008  平板竖屏       → compact（紧凑图标列）
     //   ≥ 1008      平板横屏 / 桌面 → open（完整展开侧边栏）
-    final PaneDisplayMode displayMode = width < 640
-        ? PaneDisplayMode.minimal
-        : width < 1008
-            ? PaneDisplayMode.compact
-            : PaneDisplayMode.open;
+    final PaneDisplayMode displayMode = width < 1008
+        ? PaneDisplayMode.compact
+        : PaneDisplayMode.open;
     final nav = NavigationView(
       pane: NavigationPane(
         selected: _index,
@@ -62,6 +80,47 @@ class _ShellState extends State<Shell> {
         const WindowTitleBar(),
         Expanded(child: nav),
       ],
+    );
+  }
+
+  /// 底部导航栏（仅手机端显示）。
+  Widget _buildBottomBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xF21E1E1E),
+        border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            _buildBottomItem(0, FluentIcons.home, '状态'),
+            _buildBottomItem(1, FluentIcons.folder, '映射'),
+            _buildBottomItem(2, FluentIcons.settings, '设置'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomItem(int index, IconData icon, String label) {
+    final selected = index == _index;
+    final color = selected ? const Color(0xFF4A9EFF) : const Color(0xFF8A8A8A);
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _index = index),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Icon(icon, size: 22, color: color),
+            const SizedBox(height: 3),
+            Text(label, style: TextStyle(fontSize: 11, color: color)),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
   }
 }
