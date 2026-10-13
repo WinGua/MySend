@@ -1,8 +1,10 @@
 import 'package:fluent_ui/fluent_ui.dart';
 
+import '../core/utils.dart';
 import 'pages/home_page.dart';
 import 'pages/mappings_page.dart';
 import 'pages/settings_page.dart';
+import 'window_title_bar.dart';
 
 /// 应用导航外壳（Win11 风格侧边栏）。
 class Shell extends StatefulWidget {
@@ -17,11 +19,21 @@ class _ShellState extends State<Shell> {
 
   @override
   Widget build(BuildContext context) {
-    return NavigationView(
+    final width = MediaQuery.of(context).size.width;
+    // 响应式导航，兼顾手机 / 平板 / 桌面：
+    //   < 640       手机          → minimal（仅汉堡按钮，点开展开，不挤占内容区）
+    //   640 – 1008  平板竖屏       → compact（紧凑图标列）
+    //   ≥ 1008      平板横屏 / 桌面 → open（完整展开侧边栏）
+    final PaneDisplayMode displayMode = width < 640
+        ? PaneDisplayMode.minimal
+        : width < 1008
+            ? PaneDisplayMode.compact
+            : PaneDisplayMode.open;
+    final nav = NavigationView(
       pane: NavigationPane(
         selected: _index,
         onChanged: (i) => setState(() => _index = i),
-        displayMode: PaneDisplayMode.open,
+        displayMode: displayMode,
         items: [
           PaneItem(
             icon: const Icon(FluentIcons.home),
@@ -42,6 +54,14 @@ class _ShellState extends State<Shell> {
           ),
         ],
       ),
+    );
+
+    if (!isWindows) return nav;
+    return Column(
+      children: [
+        const WindowTitleBar(),
+        Expanded(child: nav),
+      ],
     );
   }
 }
