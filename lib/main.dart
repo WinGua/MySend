@@ -11,9 +11,16 @@ import 'core/utils.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 安卓端隐藏系统状态栏 / 导航栏（沉浸式）。
+  // 安卓端边到边显示：内容延伸到状态栏/刘海区域，状态栏透明。
+  // 相比 immersiveSticky，edgeToEdge 对挖孔屏和 Android 15+ 兼容性更好。
   if (isAndroid) {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+      ),
+    );
   }
 
   scope = AppScope();
