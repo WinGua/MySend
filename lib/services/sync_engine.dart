@@ -60,7 +60,7 @@ class SyncEngine {
         mapping.destPath,
         e.relativePath.replaceAll('/', Platform.pathSeparator),
       );
-      await client.downloadFile(mapping.name, e.relativePath, destFile);
+      await client.downloadFile(mapping.name, e.relativePath, destFile, mtimeMs: e.mtimeMs);
       onProgress(i + 1, total, e);
     }
   }

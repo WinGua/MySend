@@ -171,10 +171,12 @@ class _MappingFormDialogState extends State<_MappingFormDialog> {
 
   Future<void> _pickDest() async {
     if (isAndroid) {
-      // 安卓端走「所有文件访问」权限 + 手动填写真实路径。
+      // 安卓端先确保「所有文件访问」权限（用于写入真实路径），再打开目录选择器。
       final ok = await ensureFileAccess();
-      if (!ok) await openManageStorageSettings();
-      return;
+      if (!ok) {
+        await openManageStorageSettings();
+        return;
+      }
     }
     final p = await FolderPicker.pick();
     if (p != null && p.isNotEmpty) _dest.text = p;

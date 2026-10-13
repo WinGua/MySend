@@ -53,7 +53,9 @@ class FileEntry {
   }
 
   /// 判断两个条目是否「内容已变更」（路径相同但大小或时间不同）。
-  bool sameContentAs(FileEntry other) => size == other.size && mtimeMs == other.mtimeMs;
+  /// 时间采用 2 秒容差，兼容 FAT/exFAT 存储卡等只精确到秒的文件系统。
+  bool sameContentAs(FileEntry other) =>
+      size == other.size && (mtimeMs - other.mtimeMs).abs() <= 2000;
 
   @override
   String toString() => 'FileEntry($relativePath, $size B)';

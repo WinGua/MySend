@@ -75,6 +75,7 @@ class ReceiverClient {
     String mappingName,
     String relativePath,
     String destFilePath, {
+    int? mtimeMs,
     void Function(int received, int total)? onProgress,
   }) async {
     final client = _client();
@@ -97,6 +98,12 @@ class ReceiverClient {
         onProgress?.call(received, total);
       }
       await sink.close();
+      // 回写源文件的修改时间，避免二次对比时被误判为「变更」。
+      if (mtimeMs != null) {
+        try {
+          await file.setLastModified(DateTime.fromMillisecondsSinceEpoch(mtimeMs));
+        } catch (_) {}
+      }
     } finally {
       client.close();
     }
