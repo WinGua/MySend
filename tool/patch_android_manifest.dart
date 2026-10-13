@@ -22,24 +22,31 @@ void main() {
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
 ''';
 
-  // 在 <application ...> 之前插入权限声明
-  final appMarker = '<application';
-  final appIdx = content.indexOf(appMarker);
-  if (appIdx == -1) {
-    stderr.writeln('未找到 <application 标记');
-    exit(1);
-  }
+  // 1. 在 <application> 之前插入权限声明
+  const appMarker = '<application';
   if (!content.contains('MANAGE_EXTERNAL_STORAGE')) {
+    final idx = content.indexOf(appMarker);
+    if (idx == -1) {
+      stderr.writeln('未找到 <application 标记');
+      exit(1);
+    }
     content = content.replaceFirst(appMarker, '$permissions$appMarker');
   }
 
-  // 在 <application> 起始标签内补充属性
-  const appAttrs = 'android:usesCleartextTraffic="true"';
+  // 2. 在 <application> 起始标签的结束 ">" 之前补充 usesCleartextTraffic。
+  //    注意：必须在插入权限后重新定位 <application>，否则 appIdx 会落到权限块内。
   if (!content.contains('usesCleartextTraffic')) {
-    final gt = content.indexOf('>', appIdx);
-    if (gt != -1) {
-      content = content.replaceRange(gt, gt, ' $appAttrs');
+    final start = content.indexOf(appMarker);
+    if (start == -1) {
+      stderr.writeln('未找到 <application 标记');
+      exit(1);
     }
+    final gt = content.indexOf('>', start);
+    if (gt == -1) {
+      stderr.writeln('<application 起始标签缺少 ">"');
+      exit(1);
+    }
+    content = content.replaceRange(gt, gt, ' android:usesCleartextTraffic="true"');
   }
 
   // 设置应用显示名称为 MySend。
