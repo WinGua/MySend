@@ -88,6 +88,7 @@ class _HomePageState extends State<HomePage> {
     final plan = _plans[m.id];
     if (peer == null || plan == null || plan.isEmpty) return;
     setState(() => _syncing[m.id] = true);
+    final synced = <String>[];
     try {
       final client = ReceiverClient(address: peer.address, port: peer.port);
       await SyncEngine.run(
@@ -96,7 +97,7 @@ class _HomePageState extends State<HomePage> {
         files: plan.toSend,
         onProgress: (done, total, current) {
           if (mounted) setState(() {});
-          _addLog('($done/$total) ${current.relativePath}');
+          synced.add(current.relativePath.split('/').last);
         },
       );
       if (mounted) {
@@ -109,7 +110,7 @@ class _HomePageState extends State<HomePage> {
         );
         setState(() => _plans[m.id] = cleared);
       }
-      _addLog('「${m.name}」同步完成，本次共 ${plan.toSend.length} 个文件');
+      _addLog(_syncLog(m.destPath, synced));
     } catch (e) {
       _addLog('「${m.name}」同步失败: $e');
     } finally {
@@ -371,6 +372,18 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+
+  /// 生成同步完成日志：列出文件名，超过 3 个时只显示前 3 个并加省略号。
+  static String _syncLog(String destPath, List<String> names) {
+    if (names.isEmpty) return '没有文件需要同步';
+    final dir = destPath.isEmpty ? '目标目录' : destPath;
+    if (names.length == 1) return '《${names[0]}》已同步到了$dir';
+    if (names.length <= 3) {
+      return '${names.map((n) => '《$n》').join('、')}已同步到了$dir';
+    }
+    return '《${names[0]}》《${names[1]}》《${names[2]}》…'
+        '共${names.length}个文件已同步到了$dir';
   }
 
   static String _fmtBytes(int bytes) {

@@ -32,7 +32,10 @@ void main() {
 package $packageName
 
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.WindowManager
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -52,10 +55,24 @@ class MainActivity : FlutterActivity() {
     private fun applyFullscreen() {
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
-        // 铺满到状态栏/挖孔区域（edge-to-edge），配合 AndroidManifest 的 shortEdges。
+        // 1) 内容铺满到状态栏/挖孔区域（edge-to-edge）
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        // 2) 程序化指定挖孔显示模式（部分 ROM 只认运行期设置，双保险）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        // 3) 旧式沉浸全屏 flags（部分国产 ROM 对 WindowInsetsController 不敏感，双保险）
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            )
+        // 4) 现代 WindowInsetsController 隐藏状态栏
         val controller = WindowCompat.getInsetsController(window, window.decorView)
-        // 必须先设 behavior 再 hide；下滑可暂时唤出系统栏，之后自动再次隐藏。
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller.hide(WindowInsetsCompat.Type.statusBars())
