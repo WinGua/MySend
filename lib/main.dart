@@ -21,9 +21,13 @@ Future<void> main() async {
         statusBarIconBrightness: Brightness.light,
       ),
     );
-    // 首帧后再隐藏系统栏，让 edgeToEdge 的挖孔布局先稳定，避免退回顶部黑边。
+    // 首帧后仅隐藏顶部状态栏：用 manual 模式而非 immersiveSticky，
+    // 避免切换到 immersive 触发窗口重排、把 edgeToEdge 的挖孔铺满覆盖回顶部黑边。
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: [SystemUiOverlay.bottom],
+      );
     });
   }
 
