@@ -1,12 +1,42 @@
-# 音乐同步（Music Sync）
+# MySend
 
-局域网内把电脑上的音乐库**单向同步**到 Android 手机/平板的桌面应用。
-一套 Flutter 代码同时编译为 **Windows 桌面端（发送端）** 和 **Android 端（接收端）**，
-UI 统一采用 Windows 11 磨砂玻璃（Mica/Acrylic）风格。
+局域网内，把电脑上的文件夹**单向同步**到 Android 手机/平板。一套 Flutter 代码同时编译出
+**Windows 桌面端（发送端）** 与 **Android 端（接收端）**，UI 采用 Windows 11 风格的磨砂玻璃
+（Acrylic / Mica）视觉。
 
-- 方向：`PC → Android`，单向。
-- 规则：只同步**新增**文件（可选「同步变更」），**不处理删除**。
-- 映射：用户手动配置**多组**「子目录 → 子目录」，两端以「名称」配对。
+MySend 面向「电脑 → 手机」这一最常见的单向归档场景：无论是音乐、照片、文档还是其他文件，
+只要把电脑上的目录与手机上的目录做一次映射，之后新增 / 变动的文件就能按映射自动同步过去。
+
+## 特性
+
+- **单向同步**：仅「电脑 → Android」，不做反向或设备间互传。
+- **只增不删**：默认仅同步**新增**文件，可在设置里开启「同步变更」；**完全不处理删除**，
+  手机端多出的文件不会被自动清理，需要你自己手动管理。
+- **多组映射**：可手动配置任意多组「电脑目录 ↔ 手机目录」，两端以映射「名称」配对，
+  传输时按**相对路径**对齐，两端根目录可各自独立配置。
+- **局域网直连**：通过 UDP 广播自动发现设备，广播失效时可用「手动添加设备」输入 IP 兜底。
+- **差异对比**：以「相对路径 + 文件大小 + 修改时间」计算差异，带 2 秒时间容差，
+  兼容不同文件系统的修改时间精度。
+- **响应式界面**：手机端使用底部导航，平板 / 桌面端自动切换为 Win11 侧边栏。
+- **跨端统一**：一套 Dart 代码，Windows 与 Android 共用同一套 UI 与同步逻辑。
+
+## 工作原理
+
+1. 发送端扫描源目录，为每个文件建立索引（相对路径、大小、修改时间）。
+2. 接收端扫描自己的目标目录，建立同样结构的索引。
+3. 两端索引按「相对路径」对齐比对：
+   - 发送端有、接收端没有 → **新增** → 传输
+   - 两端都有，但大小或修改时间不同 → **变更** → 由设置决定是否传输
+   - 接收端有、发送端没有 → **忽略**（不处理删除）
+4. 差异清单确认后，通过局域网 HTTP 把文件从电脑传输到手机对应目录。
+   （当前为明文 HTTP，尚未启用 TLS 加密）
+
+## 技术栈
+
+- Flutter（stable 渠道）
+- [fluent_ui](https://pub.dev/packages/fluent_ui)（Fluent Design 组件库）
+- [window_manager](https://pub.dev/packages/window_manager) + [flutter_acrylic](https://pub.dev/packages/flutter_acrylic)（无边框窗口与磨砂玻璃）
+- Dart
 
 ## 目录结构
 
@@ -22,56 +52,45 @@ music-sync/
 │   │   ├── discovery_service.dart # 局域网发现（UDP 广播）
 │   │   ├── local_index_service.dart # 本地索引扫描
 │   │   ├── sync_engine.dart       # 差异计算 + 单向传输
-│   │   └── transfer/              # HTTP 发送端 / 接收端
+│   │   └── transfer/              # 发送端 / 接收端（HTTP）
 │   ├── platform/                  # 权限、目录选择
-│   └── ui/                        # 主题、导航、页面
-├── tool/patch_android_manifest.dart # 云端打包时注入 Android 权限
-├── .github/workflows/build.yml      # 云端打包（APK + exe）
+│   └── ui/                        # 主题、导航、页面、磨砂玻璃组件
+├── tool/                          # 构建期补丁脚本（Android 权限 / 原生全屏等）
+├── .github/workflows/             # CI 构建脚本
 └── pubspec.yaml
 ```
 
-## 云端打包（无需本机装 Flutter / Android SDK / VS）
-
-你只需要一个 GitHub 账号，全程在网页上操作：
-
-1. 在 GitHub 新建一个**空仓库**（例如 `music-sync`），不要勾选 README/.gitignore。
-2. 本地执行（在 `music-sync` 项目目录内）：
-   ```powershell
-   git init
-   git add .
-   git commit -m "init: music sync"
-   git branch -M main
-   git remote add origin https://github.com/<你的用户名>/music-sync.git
-   git push -u origin main
-   ```
-3. 打开仓库的 **Actions** 标签页，点击 `build` workflow → **Run workflow**（手动触发即可）。
-4. 等待两个 job 跑完，在页面下方 **Artifacts** 下载：
-   - `music_sync_android` → `app-release.apk`（装到手机）
-   - `music_sync_windows` → 解压后运行 `music_sync.exe`（PC）
-
-> 打 tag（`git tag v1.0 && git push --tags`）也会自动触发一次构建。
-
 ## 使用说明
 
-### PC（发送端）
-1. 运行程序，进入「映射」页「添加映射」，**名称**填一个能对上号的键（如 `中文`、`摇滚`），
-   「源目录」点「浏览」选择电脑上的对应文件夹（`C:\Users\OHD\Music\Chinese`）。
-2. 保持程序运行，它会自动广播并作为发送端监听。
+### 电脑端（发送端）
 
-### Android（接收端）
+1. 运行 `MySend.exe`，进入「映射」页点击「添加映射」。
+2. 「名称」填一个两端能对上的键（如 `音乐`、`文档`），「源目录」点「浏览」选择电脑上的对应文件夹。
+3. 保持程序运行，它会自动广播并作为发送端监听。
+
+### Android 端（接收端）
+
 1. 安装 APK，进入「设置」→「申请文件访问权限」，授予「允许访问所有文件」。
 2. 「映射」页添加**同名**的映射，「目标目录」填手机真实路径
-   （如 `/storage/emulated/0/Music/中文`）。
-3. 回到「状态」页，选中发现的电脑，点每组的「对比」查看差异，再点「同步新增」。
+   （如 `/storage/emulated/0/Music`）。
+3. 回到「状态」页，选中发现的电脑，点每组映射的「对比」查看差异，再点「同步新增」。
 
-> 两端同名的映射越多越省事；不想同步的目录直接不配即可。
+> 两端映射的「名称」保持一致即可配对；不想同步的目录直接不配置。
 
-## 已知限制（v1 诚实说明）
+## 已知限制与说明
 
-- **传输为局域网明文 HTTP**（尚未加 TLS）。参考 LocalSend 的 HTTPS + 证书固定可作为后续强化项。
-- **Windows exe 未签名**：在别的电脑第一次运行会弹 SmartScreen，点「更多信息 → 仍要运行」即可。
-- **APK 使用 Flutter 默认签名**：个人侧载直接安装即可；若要上架需自签 release key。
-- **Android 目标目录用真实路径填写**：依赖「所有文件访问」权限（个人侧载简单），
-  若以后要上架 Google Play 需改用 SAF（文件夹选择器授权）。
+- **传输为局域网明文 HTTP**，未加密，仅建议在可信的局域网内使用。
+- **Windows 可执行文件未签名**，在其他电脑首次运行会弹出 SmartScreen，
+  点「更多信息 → 仍要运行」即可。
+- **APK 使用 Flutter 默认签名**，适合个人侧载；若要上架需自行配置 release 签名。
+- **Android 端需要「所有文件访问」权限**来直接写入真实目录；若要上架 Google Play，
+  需改用 SAF（文件夹选择器授权）方案。
 - **广播发现**在个别路由器下可能失效，可用「手动添加设备」输入 IP 兜底。
-- 依赖版本若在云端 `flutter pub get` 报错，微调 `pubspec.yaml` 对应版本号即可。
+- 少数国产系统（如 vivo OriginOS）对全屏 / 挖孔区域有系统级限制，
+  可能需要在系统「屏幕顶部显示」里把本应用设为「显示前置摄像头」。
+
+## AI 开发说明
+
+本项目由 AI 辅助开发形成。虽然已经过多轮代码检查与真机测试，仍可能存在尚未发现的问题、
+边界情况或设计上的不足。使用时如遇到 bug，欢迎提交 Issue 反馈；也欢迎发起 Pull Request
+共同改进。
