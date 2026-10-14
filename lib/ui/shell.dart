@@ -4,6 +4,7 @@ import '../core/utils.dart';
 import 'pages/home_page.dart';
 import 'pages/mappings_page.dart';
 import 'pages/settings_page.dart';
+import 'widgets/glass.dart';
 import 'window_title_bar.dart';
 
 /// 应用导航外壳（Win11 风格侧边栏，手机端自动切换为底部导航）。
@@ -21,8 +22,13 @@ class _ShellState extends State<Shell> {
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     // 手机（窄屏）没有侧边栏空间，改用底部导航；平板 / 桌面用侧边栏。
-    if (width < 640) return _buildMobile();
-    return _buildDesktop(width);
+    final content = width < 640 ? _buildMobile() : _buildDesktop(width);
+    return Stack(
+      children: [
+        const Positioned.fill(child: GradientBackground()),
+        content,
+      ],
+    );
   }
 
   /// 手机端：内容区 + 底部导航（状态 / 映射 / 设置）。
@@ -113,8 +119,7 @@ class _ShellState extends State<Shell> {
     final selected = index == _index;
     final color = selected ? const Color(0xFF4A9EFF) : const Color(0xFF8A8A8A);
     return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
+      child: PressableScale(
         onTap: () => setState(() => _index = index),
         child: Column(
           mainAxisSize: MainAxisSize.min,

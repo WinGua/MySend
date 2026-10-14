@@ -5,6 +5,7 @@ import '../../core/utils.dart';
 import '../../models/sync_mapping.dart';
 import '../../platform/folder_picker.dart';
 import '../../platform/permissions.dart';
+import '../widgets/glass.dart';
 
 class MappingsPage extends StatefulWidget {
   const MappingsPage({super.key});
@@ -99,13 +100,8 @@ class _MappingsPageState extends State<MappingsPage> {
     final roleLabel = isSender ? '源目录' : '目标目录';
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Container(
+      child: GlassCard(
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0x2Effffff),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0x22ffffff)),
-        ),
         child: Row(
           children: [
             const Icon(FluentIcons.folder, size: 24),

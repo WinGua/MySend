@@ -9,6 +9,7 @@ import '../../models/sync_plan.dart';
 import '../../services/local_index_service.dart';
 import '../../services/sync_engine.dart';
 import '../../services/transfer/receiver_client.dart';
+import '../widgets/glass.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -214,15 +215,7 @@ class _HomePageState extends State<HomePage> {
         child: Text(t, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
       );
 
-  Widget _card(Widget child) => Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0x2Effffff),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0x22ffffff)),
-        ),
-        child: child,
-      );
+  Widget _card(Widget child) => GlassCard(child: child);
 
   Widget _deviceCard(String deviceName, int transferPort) {
     return Row(

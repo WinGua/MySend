@@ -6,8 +6,9 @@ class AppTheme {
 
   static FluentThemeData dark() => FluentThemeData(
         brightness: Brightness.dark,
-        accentColor: Colors.blue,
-        // 半透明背景，透出窗口背后的 Mica/Acrylic 磨砂效果。
-        scaffoldBackgroundColor: const Color(0xB31E1E1E),
+        accentColor: const Color(0xFF4A9EFF),
+        // 背景交给 shell 里的 GradientBackground + 毛玻璃卡片，
+        // 此处设为透明，避免遮挡渐变底。
+        scaffoldBackgroundColor: const Color(0x00000000),
       );
 }
