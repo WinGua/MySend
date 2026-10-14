@@ -31,11 +31,14 @@ jobs:
       - name: 构建 APK
         run: flutter build apk --release
 
+      - name: 重命名 APK
+        run: mv build/app/outputs/flutter-apk/app-release.apk MySend-Android.apk
+
       - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
           name: my_send_android
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: MySend-Android.apk
 
   windows:
     runs-on: windows-2022
@@ -57,8 +60,37 @@ jobs:
       - name: 构建 Windows
         run: flutter build windows --release
 
+      - name: 打包 Windows 为 zip
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath MySend-Windows-x64.zip
+
       - name: 上传 Windows 程序
         uses: actions/upload-artifact@v4
         with:
           name: my_send_windows
-          path: build/windows/x64/runner/Release
+          path: MySend-Windows-x64.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [android, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: my_send_android
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: my_send_windows
+
+      - name: 发布 GitHub Release
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            MySend-Android.apk \
+            MySend-Windows-x64.zip \
+            --title "MySend ${GITHUB_REF_NAME}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
