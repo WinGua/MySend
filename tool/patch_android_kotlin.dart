@@ -1,7 +1,13 @@
 // 云端打包辅助脚本：把 `flutter create` 生成的 MainActivity.kt 重写为原生全屏实现。
-// 背景：OriginOS 上，Dart 侧一切 SystemChrome / SystemUiMode 切换都会触发窗口重排，
-//       覆盖掉 AndroidManifest 里 windowLayoutInDisplayCutoutMode="shortEdges" 的挖孔铺满。
+// 背景：Dart 侧一切 SystemChrome / SystemUiMode 切换都会触发窗口重排，
+//       覆盖掉 AndroidManifest 里 windowLayoutInDisplayCutoutMode 的挖孔铺满效果。
 //       因此把「铺满挖孔 + 隐藏状态栏」全部下沉到原生，Dart 侧不再触碰任何系统 UI API。
+//
+// 本方案适用 Pixel / 三星 / 小米 / 华为等绝大多数安卓设备（edge-to-edge + cutout ALWAYS +
+// 隐藏状态栏是 Android 标准做法）。唯一的已知例外是 vivo OriginOS：它会用系统级
+// 「屏幕顶部显示」开关（设置 → 显示与亮度 → 屏幕顶部显示）覆盖应用的 cutout 声明，
+// 个别机型默认把侧载应用判为「隐藏前置摄像头」，此时需用户手动把本应用调成
+// 「显示前置摄像头」——这是 ROM 级限制，App 侧无法绕过，与代码无关。
 // 用法（在项目根目录）：dart tool/patch_android_kotlin.dart
 import 'dart:io';
 
