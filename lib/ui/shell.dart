@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:fluent_ui/fluent_ui.dart';
 
 import '../core/utils.dart';
@@ -130,21 +132,56 @@ class _ShellState extends State<Shell> {
     );
   }
 
-  /// 底部导航栏（仅手机端显示）。
+  /// 底部导航栏（仅手机端显示）：悬浮毛玻璃胶囊 + 滑动指示器。
   Widget _buildBottomBar() {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xF21E1E1E),
-        border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: [
-            _buildBottomItem(0, FluentIcons.home, '状态'),
-            _buildBottomItem(1, FluentIcons.folder, '映射'),
-            _buildBottomItem(2, FluentIcons.settings, '设置'),
-          ],
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              height: 64,
+              decoration: BoxDecoration(
+                color: const Color(0x33101820),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: const Color(0x1FFFFFFF)),
+              ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final pillWidth = constraints.maxWidth / 3;
+                  return Stack(
+                    children: [
+                      AnimatedPositioned(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        left: _index * pillWidth + 8,
+                        top: 8,
+                        bottom: 8,
+                        width: pillWidth - 16,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0x334A9EFF),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                      ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildBottomItem(0, FluentIcons.home, '状态'),
+                          _buildBottomItem(1, FluentIcons.folder, '映射'),
+                          _buildBottomItem(2, FluentIcons.settings, '设置'),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -157,13 +194,11 @@ class _ShellState extends State<Shell> {
       child: PressableScale(
         onTap: () => setState(() => _index = index),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const SizedBox(height: 10),
             Icon(icon, size: 22, color: color),
             const SizedBox(height: 3),
             Text(label, style: TextStyle(fontSize: 11, color: color)),
-            const SizedBox(height: 8),
           ],
         ),
       ),
