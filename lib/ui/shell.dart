@@ -18,6 +18,12 @@ class Shell extends StatefulWidget {
 class _ShellState extends State<Shell> {
   int _index = 0;
 
+  static const List<Widget> _pages = <Widget>[
+    HomePage(),
+    MappingsPage(),
+    SettingsPage(),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
@@ -33,18 +39,13 @@ class _ShellState extends State<Shell> {
 
   /// 手机端：内容区 + 底部导航（状态 / 映射 / 设置）。
   Widget _buildMobile() {
-    const pages = <Widget>[
-      HomePage(),
-      MappingsPage(),
-      SettingsPage(),
-    ];
     return Column(
       children: [
         Expanded(
           child: SafeArea(
             top: true,
             bottom: false,
-            child: pages[_index],
+            child: IndexedStack(index: _index, children: _pages),
           ),
         ),
         _buildBottomBar(),
@@ -52,46 +53,80 @@ class _ShellState extends State<Shell> {
     );
   }
 
-  /// 平板 / 桌面端：Win11 风格侧边栏。
+  /// 平板 / 桌面端：自定义侧边栏（避免 NavigationView 的不透明背景遮住渐变底）。
   Widget _buildDesktop(double width) {
-    //   640 – 1008  平板竖屏       → compact（紧凑图标列）
-    //   ≥ 1008      平板横屏 / 桌面 → open（完整展开侧边栏）
-    final PaneDisplayMode displayMode = width < 1008
-        ? PaneDisplayMode.compact
-        : PaneDisplayMode.open;
-    final nav = NavigationView(
-      pane: NavigationPane(
-        selected: _index,
-        onChanged: (i) => setState(() => _index = i),
-        displayMode: displayMode,
-        items: [
-          PaneItem(
-            icon: const Icon(FluentIcons.home),
-            title: const Text('状态'),
-            body: const HomePage(),
-          ),
-          PaneItem(
-            icon: const Icon(FluentIcons.folder),
-            title: const Text('映射'),
-            body: const MappingsPage(),
-          ),
-        ],
-        footerItems: [
-          PaneItem(
-            icon: const Icon(FluentIcons.settings),
-            title: const Text('设置'),
-            body: const SettingsPage(),
-          ),
-        ],
-      ),
+    //   < 1008 平板竖屏 → compact（仅图标）；  ≥ 1008 → open（图标 + 文字）
+    final open = width >= 1008;
+    final body = Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildSidebar(open),
+        Expanded(child: IndexedStack(index: _index, children: _pages)),
+      ],
     );
 
-    if (!isWindows) return nav;
+    if (!isWindows) return body;
     return Column(
       children: [
         const WindowTitleBar(),
-        Expanded(child: nav),
+        Expanded(child: body),
       ],
+    );
+  }
+
+  /// 半透明侧边栏：透出底层渐变，选中项用左侧高亮色块 + 淡蓝底。
+  Widget _buildSidebar(bool open) {
+    return Container(
+      width: open ? 200 : 68,
+      decoration: const BoxDecoration(
+        color: Color(0x2E1B222E),
+        border: Border(right: BorderSide(color: Color(0x1FFFFFFF))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 12),
+          _sideItem(0, FluentIcons.home, '状态', open),
+          _sideItem(1, FluentIcons.folder, '映射', open),
+          const Spacer(),
+          _sideItem(2, FluentIcons.settings, '设置', open),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+
+  Widget _sideItem(int index, IconData icon, String label, bool open) {
+    final selected = index == _index;
+    final fg = selected ? const Color(0xFF4A9EFF) : const Color(0xFF9A9A9A);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      child: PressableScale(
+        onTap: () => setState(() => _index = index),
+        child: Container(
+          height: 40,
+          decoration: BoxDecoration(
+            color: selected ? const Color(0x2E4A9EFF) : const Color(0x00000000),
+            borderRadius: BorderRadius.circular(8),
+            border: selected
+                ? const Border(
+                    left: BorderSide(color: Color(0xFF4A9EFF), width: 3),
+                  )
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: open ? MainAxisAlignment.start : MainAxisAlignment.center,
+            children: [
+              if (open) const SizedBox(width: 12),
+              Icon(icon, size: 20, color: fg),
+              if (open) ...[
+                const SizedBox(width: 12),
+                Text(label, style: TextStyle(fontSize: 14, color: fg)),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 
