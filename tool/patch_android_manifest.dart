@@ -55,7 +55,7 @@ void main() {
     if (actStart != -1) {
       final actGt = content.indexOf('>', actStart);
       if (actGt != -1) {
-        content = content.replaceRange(actGt, actGt, ' android:windowLayoutInDisplayCutoutMode="shortEdges"');
+        content = content.replaceRange(actGt, actGt, ' android:windowLayoutInDisplayCutoutMode="always"');
       }
     }
   }

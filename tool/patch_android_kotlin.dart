@@ -57,10 +57,15 @@ class MainActivity : FlutterActivity() {
         window.navigationBarColor = Color.TRANSPARENT
         // 1) 内容铺满到状态栏/挖孔区域（edge-to-edge）
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        // 2) 程序化指定挖孔显示模式（部分 ROM 只认运行期设置，双保险）
+        // 2) 程序化指定挖孔显示模式。关键点有二：
+        //    a) edge-to-edge / 隐藏状态栏时用 ALWAYS（而非 SHORT_EDGES），
+        //       因为 SHORT_EDGES 在窗口处于全屏/沉浸态时会被系统当作不铺满挖孔；
+        //    b) 必须取副本、改字段、再整体回写 setAttributes，直接改字段不生效。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            window.attributes.layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            window.attributes = lp
         }
         // 3) 旧式沉浸全屏 flags（部分国产 ROM 对 WindowInsetsController 不敏感，双保险）
         window.decorView.systemUiVisibility = (
