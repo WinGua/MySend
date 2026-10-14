@@ -41,7 +41,7 @@ MySend 面向「电脑 → 手机」这一最常见的单向归档场景：无�
 ## 目录结构
 
 ```
-music-sync/
+MySend/
 ├── lib/
 │   ├── main.dart                  # 入口：窗口 / 服务初始化
 │   ├── app.dart / app_scope.dart  # App 与全局服务容器
