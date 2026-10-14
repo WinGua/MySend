@@ -6,7 +6,7 @@ class AppTheme {
 
   static FluentThemeData dark() => FluentThemeData(
         brightness: Brightness.dark,
-        accentColor: const Color(0xFF4A9EFF),
+        accentColor: Colors.blue,
         // 背景交给 shell 里的 GradientBackground + 毛玻璃卡片，
         // 此处设为透明，避免遮挡渐变底。
         scaffoldBackgroundColor: const Color(0x00000000),
