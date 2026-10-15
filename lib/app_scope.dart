@@ -1,10 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
 import 'core/utils.dart';
 import 'services/discovery_service.dart';
-import 'services/local_index_service.dart';
 import 'services/transfer/sender_server.dart';
 import 'storage/config_repository.dart';
 
@@ -39,9 +36,6 @@ class AppScope extends ChangeNotifier {
     }
 
     notifyListeners();
-
-    // 启动即预热本机文件索引缓存，让首次「对比」也能即时出结果。
-    warmAllIndexCaches();
   }
 
   Future<void> stopServices() async {
@@ -50,27 +44,6 @@ class AppScope extends ChangeNotifier {
     await server?.stop();
     discovery = null;
     server = null;
-  }
-
-  /// 后台预热某个目录的文件哈希缓存（不阻塞 UI、不等待完成）。
-  void warmIndexCache(String root) {
-    if (root.trim().isEmpty) return;
-    unawaited(_warmIndex(root));
-  }
-
-  Future<void> _warmIndex(String root) async {
-    try {
-      await LocalIndexService.scan(root);
-    } catch (_) {
-      // 预热的目录暂不可读（如安卓尚未授权）时静默忽略，不影响使用。
-    }
-  }
-
-  /// 预热本机上所有映射涉及目录的缓存。
-  void warmAllIndexCaches() {
-    for (final m in config.config.mappings) {
-      warmIndexCache(isSender ? m.sourcePath : m.destPath);
-    }
   }
 }
 

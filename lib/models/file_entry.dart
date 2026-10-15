@@ -1,9 +1,6 @@
 import 'dart:convert';
 
-/// 一个文件的索引条目。
-///
-/// 以「相对路径」为唯一身份标识；优先用内容哈希（SHA-256）检测「变更」，
-/// 哈希不可用时退回「大小 + 修改时间」。
+/// 一个文件的索引条目，以「相对路径」为唯一身份标识。
 class FileEntry {
   /// 相对映射根目录的路径，统一 `/` 分隔，如 `Album/Artist/song.mp3`。
   final String relativePath;
@@ -11,17 +8,13 @@ class FileEntry {
   /// 文件字节数。
   final int size;
 
-  /// 文件最后修改时间（毫秒时间戳）。
+  /// 文件最后修改时间（毫秒时间戳），下载后回写以保持两端一致。
   final int mtimeMs;
-
-  /// 文件内容 SHA-256（十六进制），用于内容级变更比对。
-  final String? sha256;
 
   const FileEntry({
     required this.relativePath,
     required this.size,
     required this.mtimeMs,
-    this.sha256,
   });
 
   // 网络传输使用短字段名以减小报文体积。
@@ -29,14 +22,12 @@ class FileEntry {
         'p': relativePath,
         's': size,
         'm': mtimeMs,
-        if (sha256 != null) 'h': sha256,
       };
 
   factory FileEntry.fromJson(Map<String, dynamic> j) => FileEntry(
         relativePath: _str(j, ['p', 'path', 'relativePath']),
         size: _int(j, ['s', 'size']),
         mtimeMs: _int(j, ['m', 'mtimeMs']),
-        sha256: _nullableStr(j, ['h', 'sha256']),
       );
 
   static String _str(Map<String, dynamic> j, List<String> keys) =>
@@ -44,26 +35,6 @@ class FileEntry {
 
   static int _int(Map<String, dynamic> j, List<String> keys) =>
       keys.map((k) => j[k]).firstWhere((v) => v is num, orElse: () => 0) as int;
-
-  static String? _nullableStr(Map<String, dynamic> j, List<String> keys) {
-    for (final k in keys) {
-      final v = j[k];
-      if (v is String) return v;
-    }
-    return null;
-  }
-
-  /// 判断两个条目内容是否一致。
-  /// 优先比较 SHA-256 内容哈希（跨文件系统可靠，不受修改时间精度影响）；
-  /// 任一方缺少哈希时，只按「大小」判断：大小相同视为一致、大小不同视为变更。
-  /// —— 绝不用「修改时间」兜底，因为不同文件系统（NTFS / FAT32/exFAT）的
-  ///    时间精度与时区差异会导致跨设备几乎全部误判为「变更」。
-  bool sameContentAs(FileEntry other) {
-    if (sha256 != null && other.sha256 != null) {
-      return sha256 == other.sha256;
-    }
-    return size == other.size;
-  }
 
   @override
   String toString() => 'FileEntry($relativePath, $size B)';

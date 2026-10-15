@@ -33,6 +33,22 @@ void main() {
     content = content.replaceFirst(appMarker, '$permissions$appMarker');
   }
 
+  // 1.5 声明可打开的 https 链接（用于「GitHub 仓库」「检查更新」跳转）。
+  if (!content.contains('<queries>')) {
+    const queries = '''
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+    </queries>
+''';
+    final qIdx = content.indexOf(appMarker);
+    if (qIdx != -1) {
+      content = content.replaceFirst(appMarker, '$queries$appMarker');
+    }
+  }
+
   // 2. 在 <application> 起始标签的结束 ">" 之前补充 usesCleartextTraffic。
   //    注意：必须在插入权限后重新定位 <application>，否则 appIdx 会落到权限块内。
   if (!content.contains('usesCleartextTraffic')) {

@@ -109,7 +109,6 @@ class _HomePageState extends State<HomePage> {
           mappingName: plan.mappingName,
           toSend: const [],
           newOnly: const [],
-          changedOnly: const [],
         );
         setState(() => _plans[m.id] = cleared);
       }

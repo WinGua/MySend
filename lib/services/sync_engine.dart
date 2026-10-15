@@ -10,9 +10,7 @@ import 'transfer/receiver_client.dart';
 ///
 /// 规则：
 /// - 「新增」= 发送端索引中存在、接收端不存在的相对路径 → 待传。
-/// - 不做内容级「变更」比对：实际测试发现安卓端音乐文件常被系统/音乐 App
-///   重写 ID3 标签或封面，字节级哈希几乎全部不同，内容比对会大量误判。
-/// - 不考虑删除（删除由用户手动处理）。
+/// - 只同步新增文件，不比对内容、不处理删除。
 class SyncEngine {
   SyncEngine._();
 
@@ -37,7 +35,6 @@ class SyncEngine {
       mappingName: mapping.name,
       toSend: toSend,
       newOnly: newOnly,
-      changedOnly: const [],
     );
   }
 
