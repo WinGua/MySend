@@ -1,7 +1,7 @@
 name: music_sync
 description: 局域网文件同步工具（PC 发送端 → Android 接收端）
 publish_to: 'none'
-version: 1.1.0+6
+version: 1.0.0+7
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

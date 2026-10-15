@@ -15,7 +15,7 @@ class AppConstants {
   static const String protocolTag = 'music_sync/1';
 
   /// 当前应用版本（与 pubspec.yaml 的 version 保持一致，用于检查更新）。
-  static const String currentVersion = '1.1.0';
+  static const String currentVersion = '1.0.0';
 
   /// 项目仓库地址。
   static const String repoUrl = 'https://github.com/WinGua/MySend';

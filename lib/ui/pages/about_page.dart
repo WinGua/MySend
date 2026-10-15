@@ -67,7 +67,7 @@ class AboutPage extends StatelessWidget {
                             ),
                             _section(
                               '开发声明',
-                              'Built by Winter with DeepSeek-V4 Pro',
+                              'Built by Winter with DeepSeek',
                             ),
                             const SizedBox(height: 4),
                             Text(
