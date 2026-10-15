@@ -20,9 +20,27 @@ import '../models/file_entry.dart';
 class LocalIndexService {
   LocalIndexService._();
 
-  /// 扫描 [root] 目录。
+  /// 正在扫描中的根目录 → Future，用于合并并发请求（例如后台预热与用户点击「对比」
+  /// 同时发生），避免对同一目录重复做全量哈希。
+  static final Map<String, Future<Map<String, FileEntry>>> _inFlight = {};
+
+  /// 扫描 [root] 目录（带并发去重）。
   /// [onProgress] 可选，用于报告累计扫描到的文件数量。
   static Future<Map<String, FileEntry>> scan(
+    String root, {
+    void Function(int count)? onProgress,
+  }) {
+    final existing = _inFlight[root];
+    if (existing != null) return existing;
+    final future = _doScan(root, onProgress: onProgress);
+    _inFlight[root] = future;
+    future.whenComplete(() {
+      if (_inFlight[root] == future) _inFlight.remove(root);
+    });
+    return future;
+  }
+
+  static Future<Map<String, FileEntry>> _doScan(
     String root, {
     void Function(int count)? onProgress,
   }) async {

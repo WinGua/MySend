@@ -42,6 +42,8 @@ class _MappingsPageState extends State<MappingsPage> {
     } else {
       scope.config.updateMapping(result);
     }
+    // 新增/修改映射后立即在后台预热该目录的索引缓存。
+    scope.warmIndexCache(isSender ? result.sourcePath : result.destPath);
   }
 
   Future<void> _delete(SyncMapping m) async {

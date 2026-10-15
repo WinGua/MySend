@@ -5,13 +5,13 @@ class SyncPlan {
   final String mappingId;
   final String mappingName;
 
-  /// 需要从发送端下载的文件（新增 + 变更，取决于开关）。
+  /// 需要从发送端下载的文件（新增 + 变更）。
   final List<FileEntry> toSend;
 
   /// 仅「新增」的文件（路径在目标端不存在）。
   final List<FileEntry> newOnly;
 
-  /// 仅「变更」的文件（路径相同但大小/时间不同）。
+  /// 仅「变更」的文件（路径相同但内容不同）。
   final List<FileEntry> changedOnly;
 
   const SyncPlan({
