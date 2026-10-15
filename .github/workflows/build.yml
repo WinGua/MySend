@@ -28,6 +28,18 @@ jobs:
           cp -r assets/icons/android/mipmap-* android/app/src/main/res/
           flutter pub get
 
+      - name: 写入签名密钥（来自 Secrets）
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          mkdir -p keystore
+          echo "$ANDROID_KEYSTORE_B64" | base64 -d > keystore/my-send-release.keystore
+
+      - name: 注入签名配置
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: dart tool/patch_android_gradle.dart
+
       - name: 构建 APK
         run: flutter build apk --release
 
