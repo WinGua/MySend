@@ -6,7 +6,6 @@
 import 'dart:io';
 
 void main() {
-  final password = Platform.environment['ANDROID_KEYSTORE_PASSWORD'] ?? 'CHANGE_ME';
   final gradleFile = File('android/app/build.gradle');
   if (!gradleFile.existsSync()) {
     stderr.writeln('未找到 android/app/build.gradle，跳过签名补丁');
@@ -24,13 +23,14 @@ void main() {
   }
 
   // 2) 注入 release 签名配置（密钥路径相对 android/app/ 目录）。
+  //    注意：密码不写死在文件里，而是构建时从环境变量读取，避免密钥明文进仓库。
   final signing = '''
     signingConfigs {
         release {
             storeFile file('../../keystore/my-send-release.keystore')
-            storePassword '$password'
+            storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: ''
             keyAlias 'mysend'
-            keyPassword '$password'
+            keyPassword System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: ''
         }
     }
 ''';

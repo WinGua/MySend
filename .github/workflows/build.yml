@@ -41,6 +41,8 @@ jobs:
         run: dart tool/patch_android_gradle.dart
 
       - name: 构建 APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: flutter build apk --release
 
       - name: 重命名 APK

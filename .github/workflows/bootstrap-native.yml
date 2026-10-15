@@ -1,0 +1,40 @@
+name: bootstrap-native
+
+# 一次性工作流：在云端生成 android/ 与 windows/ 原生目录，应用现有补丁配置后，
+# 提交回 main。生成后的原生目录将「固化」在仓库里，之后 build.yml 无需再
+# flutter create + 补丁。用 workflow_dispatch 手动触发（只跑一次）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+
+      - name: 生成并配置原生目录
+        run: |
+          flutter create --project-name music_sync --platforms=android,windows .
+          dart tool/patch_android_manifest.dart
+          dart tool/patch_android_kotlin.dart
+          dart tool/patch_android_gradle.dart
+          dart tool/patch_windows.dart
+          cp -r assets/icons/android/mipmap-* android/app/src/main/res/
+          cp assets/icons/windows/app_icon.ico windows/runner/resources/app_icon.ico
+          flutter pub get
+
+      - name: 提交并推送原生目录
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add android windows
+          git commit -m "chore: 提交 android/windows 原生目录（取代云端生成+补丁）" || echo "无变化"
+          git push
