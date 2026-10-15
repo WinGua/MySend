@@ -6,7 +6,7 @@ import '../models/file_entry.dart';
 
 /// 本地文件索引扫描器。
 ///
-/// 递归扫描一个根目录，产出 `相对路径 -> FileEntry` 映射（跳过隐藏文件）。
+/// 递归扫描一个根目录，产出 `相对路径 -> FileEntry` 映射（跳过隐藏/系统文件）。
 /// 仅记录「相对路径、大小、修改时间」，用于判断接收端是否已存在同名文件，
 /// 即「只同步新增文件」。
 class LocalIndexService {
@@ -26,7 +26,7 @@ class LocalIndexService {
     await for (final entity in dir.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
       final name = p.basename(entity.path);
-      if (name.startsWith('.')) continue; // 隐藏文件
+      if (_isIgnored(name)) continue; // 跳过隐藏/系统文件
 
       final rel = toRelativePath(root, entity.path);
       if (rel.isEmpty) continue;
@@ -46,6 +46,18 @@ class LocalIndexService {
     }
 
     return result;
+  }
+
+  /// 判断是否忽略：跳过不应同步的系统/临时/缓存文件。
+  /// 覆盖：以 `.` 开头的隐藏文件、Windows 资源管理器系统文件（desktop.ini /
+  /// thumbs.db / ehthumbs.db）、以及 Office 等程序的临时锁文件（`~$` 开头）。
+  static bool _isIgnored(String name) {
+    if (name.startsWith('.')) return true;
+    if (name.startsWith('~$')) return true;
+    final lower = name.toLowerCase();
+    return lower == 'desktop.ini' ||
+        lower == 'thumbs.db' ||
+        lower == 'ehthumbs.db';
   }
 
   /// 校验安全路径并解析为绝对路径；非法则返回 null。
