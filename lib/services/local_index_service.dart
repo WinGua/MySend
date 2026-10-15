@@ -1,14 +1,14 @@
 import 'dart:io';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:path/path.dart' as p;
 
-import '../core/constants.dart';
 import '../core/utils.dart';
 import '../models/file_entry.dart';
 
 /// 本地文件索引扫描器。
 ///
 /// 递归扫描一个根目录，产出 `相对路径 -> FileEntry` 映射；
-/// 只收录音频文件、跳过隐藏文件。
+/// 收录所有文件（跳过隐藏文件），并计算内容哈希用于「变更」比对。
 class LocalIndexService {
   LocalIndexService._();
 
@@ -29,22 +29,23 @@ class LocalIndexService {
       if (entity is! File) continue;
       final name = p.basename(entity.path);
       if (name.startsWith('.')) continue; // 隐藏文件
-      if (!AppConstants.isAudio(entity.path)) continue;
 
       final rel = toRelativePath(root, entity.path);
       if (rel.isEmpty) continue;
 
       try {
         final stat = await entity.stat();
+        final sha256 = await _sha256(entity);
         result[rel] = FileEntry(
           relativePath: rel,
           size: stat.size,
           mtimeMs: stat.modified.millisecondsSinceEpoch,
+          sha256: sha256,
         );
         count++;
         onProgress?.call(count);
       } catch (_) {
-        // 单个文件读取失败不影响整体扫描。
+        // 单个文件读取/哈希失败不影响整体扫描。
       }
     }
     return result;
@@ -56,5 +57,11 @@ class LocalIndexService {
       return null;
     }
     return File(p.join(root, relativePath.replaceAll('/', Platform.pathSeparator)));
+  }
+
+  /// 流式计算文件 SHA-256，用于内容级变更比对。
+  static Future<String> _sha256(File file) async {
+    final digest = await crypto.sha256.bind(file.openRead()).first;
+    return digest.toString();
   }
 }

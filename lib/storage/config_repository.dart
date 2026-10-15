@@ -13,7 +13,6 @@ class AppConfig {
   String deviceId;
   String deviceName;
   int transferPort;
-  bool syncChangedFiles; // 是否同时同步「变更」的文件（默认仅新增）
 
   /// 多组映射。两端通过 [SyncMapping.name] 配对。
   List<SyncMapping> mappings;
@@ -22,7 +21,6 @@ class AppConfig {
     required this.deviceId,
     required this.deviceName,
     required this.transferPort,
-    required this.syncChangedFiles,
     required this.mappings,
   });
 
@@ -30,7 +28,6 @@ class AppConfig {
         deviceId: newUuid(),
         deviceName: isWindows ? '我的电脑' : '我的安卓设备',
         transferPort: AppConstants.transferPort,
-        syncChangedFiles: false,
         mappings: [],
       );
 
@@ -38,7 +35,6 @@ class AppConfig {
         'deviceId': deviceId,
         'deviceName': deviceName,
         'transferPort': transferPort,
-        'syncChangedFiles': syncChangedFiles,
         'mappings': mappings.map((m) => m.toJson()).toList(),
       };
 
@@ -46,7 +42,6 @@ class AppConfig {
         deviceId: j['deviceId'] as String? ?? newUuid(),
         deviceName: j['deviceName'] as String? ?? '未命名设备',
         transferPort: (j['transferPort'] as num?)?.toInt() ?? AppConstants.transferPort,
-        syncChangedFiles: j['syncChangedFiles'] as bool? ?? false,
         mappings: (j['mappings'] as List<dynamic>? ?? [])
             .map((e) => SyncMapping.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
@@ -100,12 +95,6 @@ class ConfigRepository extends ChangeNotifier {
 
   void setTransferPort(int port) {
     _config.transferPort = port;
-    notifyListeners();
-    save();
-  }
-
-  void setSyncChangedFiles(bool value) {
-    _config.syncChangedFiles = value;
     notifyListeners();
     save();
   }

@@ -1,8 +1,9 @@
 import 'dart:convert';
 
-/// 一个音乐文件的索引条目。
+/// 一个文件的索引条目。
 ///
-/// 以「相对路径」为唯一身份标识；大小与修改时间用于检测「变更」。
+/// 以「相对路径」为唯一身份标识；优先用内容哈希（SHA-256）检测「变更」，
+/// 哈希不可用时退回「大小 + 修改时间」。
 class FileEntry {
   /// 相对映射根目录的路径，统一 `/` 分隔，如 `Album/Artist/song.mp3`。
   final String relativePath;
@@ -13,7 +14,7 @@ class FileEntry {
   /// 文件最后修改时间（毫秒时间戳）。
   final int mtimeMs;
 
-  /// 可选 SHA-256，暂为扩展位。
+  /// 文件内容 SHA-256（十六进制），用于内容级变更比对。
   final String? sha256;
 
   const FileEntry({
@@ -52,10 +53,15 @@ class FileEntry {
     return null;
   }
 
-  /// 判断两个条目是否「内容已变更」（路径相同但大小或时间不同）。
-  /// 时间采用 2 秒容差，兼容 FAT/exFAT 存储卡等只精确到秒的文件系统。
-  bool sameContentAs(FileEntry other) =>
-      size == other.size && (mtimeMs - other.mtimeMs).abs() <= 2000;
+  /// 判断两个条目内容是否一致。
+  /// 优先比较 SHA-256 内容哈希（跨文件系统可靠，不受修改时间精度影响）；
+  /// 任一方缺少哈希时退回「大小 + 修改时间」（时间带 2 秒容差）。
+  bool sameContentAs(FileEntry other) {
+    if (sha256 != null && other.sha256 != null) {
+      return sha256 == other.sha256;
+    }
+    return size == other.size && (mtimeMs - other.mtimeMs).abs() <= 2000;
+  }
 
   @override
   String toString() => 'FileEntry($relativePath, $size B)';

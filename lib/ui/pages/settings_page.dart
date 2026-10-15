@@ -14,7 +14,6 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _name;
   late final TextEditingController _port;
-  late bool _syncChanged;
 
   @override
   void initState() {
@@ -22,7 +21,6 @@ class _SettingsPageState extends State<SettingsPage> {
     final cfg = scope.config.config;
     _name = TextEditingController(text: cfg.deviceName);
     _port = TextEditingController(text: '${cfg.transferPort}');
-    _syncChanged = cfg.syncChangedFiles;
   }
 
   @override
@@ -39,7 +37,6 @@ class _SettingsPageState extends State<SettingsPage> {
     if (port != null && port > 0 && port < 65536) {
       scope.config.setTransferPort(port);
     }
-    scope.config.setSyncChangedFiles(_syncChanged);
     await scope.startServices(); // 应用新的名称 / 端口 / 配置
     if (mounted) setState(() {});
   }
@@ -67,12 +64,6 @@ class _SettingsPageState extends State<SettingsPage> {
             const Text('传输端口'),
             const SizedBox(height: 4),
             TextBox(controller: _port, placeholder: '53318'),
-            const SizedBox(height: 16),
-            Checkbox(
-              content: const Text('同时同步「变更」的文件（默认仅同步新增）'),
-              checked: _syncChanged,
-              onChanged: (v) => setState(() => _syncChanged = v ?? false),
-            ),
             const SizedBox(height: 24),
             FilledButton(child: const Text('保存并重启服务'), onPressed: _save),
             if (isAndroid) ...[
@@ -83,7 +74,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 8),
               const Text(
-                '手机端需要「所有文件访问」权限，才能直接把音乐写入 '
+                '手机端需要「所有文件访问」权限，才能直接把文件写入 '
                 '/storage/emulated/0/... 的真实目录。',
                 style: TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
               ),

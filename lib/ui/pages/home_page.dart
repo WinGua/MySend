@@ -72,7 +72,6 @@ class _HomePageState extends State<HomePage> {
         mapping: m,
         source: srcMap,
         dest: destMap,
-        includeChanged: scope.config.config.syncChangedFiles,
       );
       if (mounted) setState(() => _plans[m.id] = plan);
       _addLog('「${m.name}」对比完成：新增 ${plan.newOnly.length}，'
@@ -341,7 +340,7 @@ class _HomePageState extends State<HomePage> {
                 ),
                 const SizedBox(width: 8),
                 Button(
-                  child: Text(syncing ? '同步中…' : '同步新增'),
+                  child: Text(syncing ? '同步中…' : '同步'),
                   onPressed: (syncing || plan == null || plan.isEmpty)
                       ? null
                       : () => _sync(m),

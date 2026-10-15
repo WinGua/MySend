@@ -10,8 +10,8 @@ import 'transfer/receiver_client.dart';
 ///
 /// 规则：
 /// - 「新增」= 发送端索引中存在、接收端不存在的相对路径 → 必传。
-/// - 「变更」= 路径相同但大小或修改时间不同 → 由 includeChanged 开关决定是否传。
-/// - 不考虑删除（删除由用户手动处理）。
+/// - 「变更」= 路径相同但内容不同（哈希/大小/时间） → 必传。
+/// - 默认同时同步「新增 + 变更」，不考虑删除（删除由用户手动处理）。
 class SyncEngine {
   SyncEngine._();
 
@@ -19,7 +19,6 @@ class SyncEngine {
     required SyncMapping mapping,
     required Map<String, FileEntry> source,
     required Map<String, FileEntry> dest,
-    required bool includeChanged,
   }) {
     final newOnly = <FileEntry>[];
     final changedOnly = <FileEntry>[];
@@ -33,8 +32,7 @@ class SyncEngine {
       }
     }
 
-    final toSend = <FileEntry>[...newOnly];
-    if (includeChanged) toSend.addAll(changedOnly);
+    final toSend = <FileEntry>[...newOnly, ...changedOnly];
     toSend.sort((a, b) => a.relativePath.compareTo(b.relativePath));
 
     return SyncPlan(
