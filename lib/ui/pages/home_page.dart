@@ -76,9 +76,6 @@ class _HomePageState extends State<HomePage> {
       if (mounted) setState(() => _plans[m.id] = plan);
       _addLog('「${m.name}」对比完成：源 ${srcMap.length} / 目标 ${destMap.length}，'
           '新增 ${plan.newOnly.length}');
-      for (final e in plan.newOnly.take(3)) {
-        _addLog('  诊断[新增] ${e.relativePath} 大小=${e.size}');
-      }
     } catch (e) {
       _addLog('「${m.name}」对比失败: $e');
     } finally {

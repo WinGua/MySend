@@ -1,6 +1,6 @@
 import 'package:fluent_ui/fluent_ui.dart';
 
-import '../core/constants.dart';
+import '../../core/constants.dart';
 import '../widgets/glass.dart';
 
 /// 「关于 MySend」介绍页。
