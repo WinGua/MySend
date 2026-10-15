@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 /// 局域网中发现的远端设备（发送端 PC 或接收端 Android）。
 class PeerDevice {
   final String id;
@@ -22,15 +20,6 @@ class PeerDevice {
     this.manual = false,
   });
 
-  Map<String, dynamic> toEnvelope() => {
-        't': 'hello',
-        'id': id,
-        'name': name,
-        'platform': platform,
-        'sender': isSender,
-        'port': port,
-      };
-
   factory PeerDevice.fromEnvelope(Map<String, dynamic> e, String sourceAddress) {
     return PeerDevice(
       id: e['id'] as String? ?? '',
@@ -42,25 +31,4 @@ class PeerDevice {
       lastSeen: DateTime.now(),
     );
   }
-
-  PeerDevice withSeen() => PeerDevice(
-        id: id,
-        name: name,
-        platform: platform,
-        isSender: isSender,
-        address: address,
-        port: port,
-        lastSeen: DateTime.now(),
-        manual: manual,
-      );
-
-  String toJson() => jsonEncode({
-        'id': id,
-        'name': name,
-        'platform': platform,
-        'sender': isSender,
-        'address': address,
-        'port': port,
-        'manual': manual,
-      });
 }

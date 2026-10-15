@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 /// 一个文件的索引条目，以「相对路径」为唯一身份标识。
 class FileEntry {
   /// 相对映射根目录的路径，统一 `/` 分隔，如 `Album/Artist/song.mp3`。
@@ -38,14 +36,4 @@ class FileEntry {
 
   @override
   String toString() => 'FileEntry($relativePath, $size B)';
-
-  static String encodeList(List<FileEntry> list) =>
-      jsonEncode(list.map((e) => e.toJson()).toList());
-
-  static List<FileEntry> decodeList(String raw) {
-    final data = jsonDecode(raw) as List<dynamic>;
-    return data
-        .map((e) => FileEntry.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-  }
 }

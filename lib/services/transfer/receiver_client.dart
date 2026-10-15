@@ -21,37 +21,6 @@ class ReceiverClient {
   Uri _uri(String path, [Map<String, String>? query]) =>
       Uri(scheme: 'http', host: address, port: port, path: path, queryParameters: query);
 
-  /// 获取发送端设备信息。
-  Future<Map<String, dynamic>> getInfo() async {
-    final client = _client();
-    try {
-      final req = await client.getUrl(_uri('/info'));
-      final res = await req.close();
-      final text = await res.transform(utf8.decoder).join();
-      return jsonDecode(text) as Map<String, dynamic>;
-    } finally {
-      client.close();
-    }
-  }
-
-  /// 获取发送端已配置的映射名列表。
-  Future<List<String>> getMappingNames() async {
-    final client = _client();
-    try {
-      final req = await client.getUrl(_uri('/mappings'));
-      final res = await req.close();
-      final text = await res.transform(utf8.decoder).join();
-      final j = jsonDecode(text) as Map<String, dynamic>;
-      final list = (j['mappings'] as List<dynamic>? ?? [])
-          .map((e) => (e as Map<String, dynamic>)['name'] as String? ?? '')
-          .where((s) => s.isNotEmpty)
-          .toList();
-      return list;
-    } finally {
-      client.close();
-    }
-  }
-
   /// 拉取某个映射在发送端的完整索引（相对路径列表）。
   Future<List<FileEntry>> getIndex(String mappingName) async {
     final client = _client();
@@ -98,7 +67,7 @@ class ReceiverClient {
         onProgress?.call(received, total);
       }
       await sink.close();
-      // 回写源文件的修改时间，避免二次对比时被误判为「变更」。
+      // 回写源文件的修改时间，保留文件的原始时间戳。
       if (mtimeMs != null) {
         try {
           await file.setLastModified(DateTime.fromMillisecondsSinceEpoch(mtimeMs));

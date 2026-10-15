@@ -25,11 +25,10 @@ class LocalIndexService {
     int count = 0;
     await for (final entity in dir.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
-      final name = p.basename(entity.path);
-      if (_isIgnored(name)) continue; // 跳过隐藏/系统文件
 
       final rel = toRelativePath(root, entity.path);
       if (rel.isEmpty) continue;
+      if (_isIgnoredPath(rel)) continue; // 跳过隐藏/系统文件及隐藏目录内容
 
       try {
         final stat = await entity.stat();
@@ -48,16 +47,23 @@ class LocalIndexService {
     return result;
   }
 
-  /// 判断是否忽略：跳过不应同步的系统/临时/缓存文件。
-  /// 覆盖：以 `.` 开头的隐藏文件、Windows 资源管理器系统文件（desktop.ini /
-  /// thumbs.db / ehthumbs.db）、以及 Office 等程序的临时锁文件（`~$` 开头）。
-  static bool _isIgnored(String name) {
-    if (name.startsWith('.')) return true;
-    if (name.startsWith('~$')) return true;
-    final lower = name.toLowerCase();
-    return lower == 'desktop.ini' ||
-        lower == 'thumbs.db' ||
-        lower == 'ehthumbs.db';
+  /// 判断相对路径是否应被忽略：跳过不应同步的系统/临时/缓存文件与隐藏目录。
+  /// 覆盖：任一路径段以 `.` 开头的隐藏文件/目录、Windows 资源管理器系统文件
+  /// （desktop.ini / thumbs.db / ehthumbs.db）、以及 Office 等程序的临时锁文件
+  /// （`~$` 开头）。
+  static bool _isIgnoredPath(String relPath) {
+    for (final part in relPath.split('/')) {
+      if (part.isEmpty) continue;
+      if (part.startsWith('.')) return true;
+      if (part.startsWith('~\u0024')) return true;
+      final lower = part.toLowerCase();
+      if (lower == 'desktop.ini' ||
+          lower == 'thumbs.db' ||
+          lower == 'ehthumbs.db') {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// 校验安全路径并解析为绝对路径；非法则返回 null。

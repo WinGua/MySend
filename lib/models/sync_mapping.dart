@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 /// 一组「子目录 → 子目录」的映射。
 ///
 /// - [name]：配对键 + 显示名，两端必须一致才能对上（如 `Chinese`）。
@@ -39,14 +37,4 @@ class SyncMapping {
         sourcePath: sourcePath ?? this.sourcePath,
         destPath: destPath ?? this.destPath,
       );
-
-  static String encodeList(List<SyncMapping> list) =>
-      jsonEncode(list.map((e) => e.toJson()).toList());
-
-  static List<SyncMapping> decodeList(String raw) {
-    final data = jsonDecode(raw) as List<dynamic>;
-    return data
-        .map((e) => SyncMapping.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-  }
 }

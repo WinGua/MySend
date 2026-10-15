@@ -1,33 +1,24 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../../core/constants.dart';
-import '../../core/utils.dart';
-import '../../models/file_entry.dart';
 import '../../models/sync_mapping.dart';
 import '../local_index_service.dart';
 
 /// 发送端（PC）HTTP 传输服务。
 ///
-/// 提供四个接口：
-/// - GET /info                     设备信息
-/// - GET /mappings                 已配置的映射（仅 name + 源目录是否存在）
+/// 提供两个接口：
 /// - GET /index?mapping=<name>     指定映射源目录的完整文件索引
 /// - GET /file?mapping=<name>&path=<rel>  下载单个文件
 ///
 /// 安全说明：当前为局域网内明文 HTTP（v1 简化）；后续可在此处挂载自签 TLS，
 /// 只需在 [start] 中为 [HttpServer.bind] 传入 [SecurityContext] 即可。
 class SenderServer {
-  final String deviceId;
-  final String deviceName;
   final int port;
   final List<SyncMapping> Function() mappingsProvider;
 
   HttpServer? _server;
 
   SenderServer({
-    required this.deviceId,
-    required this.deviceName,
     required this.port,
     required this.mappingsProvider,
   });
@@ -50,23 +41,6 @@ class SenderServer {
   void _handle(HttpRequest req) async {
     try {
       switch (req.uri.path) {
-        case '/info':
-          _writeJson(req, {
-            'id': deviceId,
-            'name': deviceName,
-            'platform': platformTag,
-            'version': 1,
-          });
-          break;
-        case '/mappings':
-          final list = mappingsProvider()
-              .where((m) =>
-                  m.sourcePath.trim().isNotEmpty &&
-                  Directory(m.sourcePath).existsSync())
-              .map((m) => {'name': m.name, 'count': -1})
-              .toList();
-          _writeJson(req, {'mappings': list});
-          break;
         case '/index':
           await _handleIndex(req);
           break;

@@ -123,12 +123,14 @@ class _HomePageState extends State<HomePage> {
     await showDialog(
       context: context,
       builder: (ctx) => ContentDialog(
-        title: const Text('手动添加发送端'),
+        title: Text(isSender ? '手动添加接收端' : '手动添加发送端'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('广播无法覆盖时，可手动填写电脑的 IP 与端口。'),
+            Text(isSender
+                ? '广播无法覆盖时，可手动填写接收设备的 IP 与端口。'
+                : '广播无法覆盖时，可手动填写电脑的 IP 与端口。'),
             const SizedBox(height: 12),
             TextBox(controller: ip, placeholder: 'IP 地址，如 192.168.1.10'),
             const SizedBox(height: 12),
@@ -147,23 +149,26 @@ class _HomePageState extends State<HomePage> {
               final p = int.tryParse(port.text.trim()) ?? AppConstants.transferPort;
               if (address.isEmpty) return;
               Navigator.pop(ctx);
+              // 手动添加的是「对端」设备：发送端添加接收端，接收端添加发送端。
               _peer = PeerDevice(
                 id: 'manual-$address',
                 name: '手动设备 ($address)',
                 platform: 'unknown',
-                isSender: true,
+                isSender: !isSender,
                 address: address,
                 port: p,
                 lastSeen: DateTime.now(),
                 manual: true,
               );
               setState(() {});
-              _addLog('已手动添加发送端 $address:$p');
+              _addLog('已手动添加设备 $address:$p');
             },
           ),
         ],
       ),
     );
+    ip.dispose();
+    port.dispose();
   }
 
   // ---- UI ----

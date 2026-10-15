@@ -27,8 +27,6 @@ class AppScope extends ChangeNotifier {
 
     if (isSender) {
       server = SenderServer(
-        deviceId: cfg.deviceId,
-        deviceName: cfg.deviceName,
         port: cfg.transferPort,
         mappingsProvider: () => config.config.mappings,
       );

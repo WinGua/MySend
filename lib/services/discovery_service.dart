@@ -84,22 +84,6 @@ class DiscoveryService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 手动添加一个设备（直连 IP）。
-  void addManual(String address, int port) {
-    final d = PeerDevice(
-      id: 'manual-$address',
-      name: '手动设备 ($address)',
-      platform: 'unknown',
-      isSender: true,
-      address: address,
-      port: port,
-      lastSeen: DateTime.now(),
-      manual: true,
-    );
-    _devices[d.id] = d;
-    notifyListeners();
-  }
-
   void _onPacket(RawSocketEvent event) {
     if (event != RawSocketEvent.read) return;
     final datagram = _socket?.receive();
