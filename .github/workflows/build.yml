@@ -88,6 +88,8 @@ jobs:
 
       - name: 发布 GitHub Release
         run: |
+          # 删除同名旧 Release（若存在），以支持重复发布同一版本号
+          gh release delete "${GITHUB_REF_NAME}" --yes 2>/dev/null || true
           gh release create "${GITHUB_REF_NAME}" \
             MySend-Android.apk \
             MySend-Windows-x64.zip \
