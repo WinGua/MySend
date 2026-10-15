@@ -55,12 +55,14 @@ class FileEntry {
 
   /// 判断两个条目内容是否一致。
   /// 优先比较 SHA-256 内容哈希（跨文件系统可靠，不受修改时间精度影响）；
-  /// 任一方缺少哈希时退回「大小 + 修改时间」（时间带 2 秒容差）。
+  /// 任一方缺少哈希时，只按「大小」判断：大小相同视为一致、大小不同视为变更。
+  /// —— 绝不用「修改时间」兜底，因为不同文件系统（NTFS / FAT32/exFAT）的
+  ///    时间精度与时区差异会导致跨设备几乎全部误判为「变更」。
   bool sameContentAs(FileEntry other) {
     if (sha256 != null && other.sha256 != null) {
       return sha256 == other.sha256;
     }
-    return size == other.size && (mtimeMs - other.mtimeMs).abs() <= 2000;
+    return size == other.size;
   }
 
   @override
