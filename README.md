@@ -65,7 +65,8 @@ MySend/
 │   │   └── transfer/              # 发送端 / 接收端（HTTP）
 │   ├── platform/                  # 权限、目录选择
 │   └── ui/                        # 主题、导航、页面、磨砂玻璃组件
-├── tool/                          # 构建期补丁脚本（Android 权限 / 原生全屏等）
+├── android/                       # Android 原生工程（已提交，含权限/签名/全屏配置）
+├── windows/                       # Windows 原生工程（已提交，产物名 MySend）
 ├── .github/workflows/             # CI 构建脚本
 └── pubspec.yaml
 ```

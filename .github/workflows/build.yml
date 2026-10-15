@@ -19,14 +19,8 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
 
-      # 云端自动生成 android/ 脚手架（本机无需 Flutter/Android SDK）
-      - name: 生成平台脚手架
-        run: |
-          flutter create --project-name music_sync --platforms=android .
-          dart tool/patch_android_manifest.dart
-          dart tool/patch_android_kotlin.dart
-          cp -r assets/icons/android/mipmap-* android/app/src/main/res/
-          flutter pub get
+      - name: 安装依赖
+        run: flutter pub get
 
       - name: 写入签名密钥（来自 Secrets）
         env:
@@ -34,11 +28,6 @@ jobs:
         run: |
           mkdir -p keystore
           echo "$ANDROID_KEYSTORE_B64" | base64 -d > keystore/my-send-release.keystore
-
-      - name: 注入签名配置
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: dart tool/patch_android_gradle.dart
 
       - name: 构建 APK
         env:
@@ -64,12 +53,8 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
 
-      - name: 生成平台脚手架
-        run: |
-          flutter create --project-name music_sync --platforms=windows .
-          dart tool/patch_windows.dart
-          Copy-Item -Force assets/icons/windows/app_icon.ico windows/runner/resources/app_icon.ico
-          flutter pub get
+      - name: 安装依赖
+        run: flutter pub get
 
       - name: 构建 Windows
         run: flutter build windows --release
