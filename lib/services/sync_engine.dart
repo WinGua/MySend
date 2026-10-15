@@ -9,9 +9,10 @@ import 'transfer/receiver_client.dart';
 /// 同步引擎：计算差异、执行单向传输（发送端 → 接收端）。
 ///
 /// 规则：
-/// - 「新增」= 发送端索引中存在、接收端不存在的相对路径 → 必传。
-/// - 「变更」= 路径相同但内容不同（哈希/大小/时间） → 必传。
-/// - 默认同时同步「新增 + 变更」，不考虑删除（删除由用户手动处理）。
+/// - 「新增」= 发送端索引中存在、接收端不存在的相对路径 → 待传。
+/// - 不做内容级「变更」比对：实际测试发现安卓端音乐文件常被系统/音乐 App
+///   重写 ID3 标签或封面，字节级哈希几乎全部不同，内容比对会大量误判。
+/// - 不考虑删除（删除由用户手动处理）。
 class SyncEngine {
   SyncEngine._();
 
@@ -21,18 +22,14 @@ class SyncEngine {
     required Map<String, FileEntry> dest,
   }) {
     final newOnly = <FileEntry>[];
-    final changedOnly = <FileEntry>[];
 
     for (final e in source.values) {
-      final d = dest[e.relativePath];
-      if (d == null) {
+      if (!dest.containsKey(e.relativePath)) {
         newOnly.add(e);
-      } else if (!d.sameContentAs(e)) {
-        changedOnly.add(e);
       }
     }
 
-    final toSend = <FileEntry>[...newOnly, ...changedOnly];
+    final toSend = <FileEntry>[...newOnly];
     toSend.sort((a, b) => a.relativePath.compareTo(b.relativePath));
 
     return SyncPlan(
@@ -40,7 +37,7 @@ class SyncEngine {
       mappingName: mapping.name,
       toSend: toSend,
       newOnly: newOnly,
-      changedOnly: changedOnly,
+      changedOnly: const [],
     );
   }
 
