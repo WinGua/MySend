@@ -29,13 +29,19 @@ class _SettingsPageState extends State<SettingsPage> {
     final cfg = scope.config.config;
     _name = TextEditingController(text: cfg.deviceName);
     _port = TextEditingController(text: '${cfg.transferPort}');
+    scope.syncLog.addListener(_onLogChanged);
   }
 
   @override
   void dispose() {
     _name.dispose();
     _port.dispose();
+    scope.syncLog.removeListener(_onLogChanged);
     super.dispose();
+  }
+
+  void _onLogChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _save() async {
@@ -52,6 +58,25 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _requestPermission() async {
     final ok = await ensureFileAccess();
     if (!ok) await openManageStorageSettings();
+  }
+
+  Future<void> _requestBackground() async {
+    final battery = await requestBatteryOptimizationExemption();
+    final notif = await ensureNotificationPermission();
+    final ok = battery && notif;
+    if (mounted) {
+      displayInfoBar(
+        context,
+        builder: (context, close) => InfoBar(
+          severity: ok ? InfoBarSeverity.success : InfoBarSeverity.warning,
+          title: Text(ok ? '已允许后台运行' : '未完全允许后台运行，切后台可能被系统关闭'),
+          action: IconButton(
+            icon: const Icon(FluentIcons.dismiss),
+            onPressed: close,
+          ),
+        ),
+      );
+    }
   }
 
   void _openAbout() {
@@ -166,6 +191,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final logs = scope.syncLog.entries;
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 860),
@@ -191,10 +217,39 @@ class _SettingsPageState extends State<SettingsPage> {
                 onPressed: _requestPermission,
               ),
               const SizedBox(height: 8),
+              Button(
+                child: const Text('允许后台运行（推荐）'),
+                onPressed: _requestBackground,
+              ),
+              const SizedBox(height: 8),
               const Text(
-                '手机端需要「所有文件访问」权限，才能直接把文件写入 '
-                '/storage/emulated/0/... 的真实目录。',
+                '手机端需要「所有文件访问」权限才能写入真实目录；'
+                '「允许后台运行」可避免切后台 / 黑屏后掉线。',
                 style: TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
+              ),
+            ],
+            const SizedBox(height: 32),
+            const Text('同步日志',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            if (logs.isEmpty)
+              const Text('暂无同步记录。', style: TextStyle(color: Color(0xFF9a9a9a)))
+            else ...logs.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '${e.mappingName} · ${_fmtTime(e.time)} · '
+                    '${e.fileCount} 个文件 · ${_fmtBytes(e.totalBytes)}',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFFc0c0c0)),
+                  ),
+                )),
+            if (logs.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Button(
+                  child: const Text('清空日志'),
+                  onPressed: () => scope.syncLog.clear(),
+                ),
               ),
             ],
             const SizedBox(height: 32),
@@ -222,5 +277,19 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ),
     );
+  }
+
+  static String _fmtTime(DateTime t) {
+    String pad(int n) => n.toString().padLeft(2, '0');
+    return '${t.month.toString().padLeft(2, '0')}-${pad(t.day)} ${pad(t.hour)}:${pad(t.minute)}';
+  }
+
+  static String _fmtBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 }

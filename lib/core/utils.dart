@@ -18,6 +18,36 @@ bool get isSender => isWindows;
 /// 平台标识字符串，写入发现报文。
 String get platformTag => isWindows ? 'windows' : (isAndroid ? 'android' : 'other');
 
+/// 设备形态：桌面 / 平板 / 手机（平板按最短边 ≥ 600dp 判定）。
+String get deviceForm {
+  if (isWindows) return 'desktop';
+  if (!isAndroid) return 'other';
+  try {
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final size = view.physicalSize / view.devicePixelRatio;
+    return size.shortestSide >= 600 ? 'tablet' : 'phone';
+  } catch (_) {
+    return 'phone';
+  }
+}
+
+/// 获取本机第一个非回环 IPv4 地址（用于二维码配对与显示）。
+Future<String?> localIpv4Address() async {
+  try {
+    final nics = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLinkLocal: false,
+    );
+    for (final nic in nics) {
+      for (final addr in nic.addresses) {
+        final ip = addr.address;
+        if (ip.isNotEmpty && !ip.startsWith('127.')) return ip;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 /// 计算文件相对根目录的相对路径（统一使用 `/` 分隔，跨平台一致）。
 String toRelativePath(String root, String filePath) {
   final rel = p.relative(filePath, from: root).replaceAll('\\', '/');

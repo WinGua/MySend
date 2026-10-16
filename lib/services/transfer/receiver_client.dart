@@ -3,7 +3,7 @@ import 'dart:io';
 
 import '../../models/file_entry.dart';
 
-/// 接收端（Android）HTTP 客户端，向发送端 PC 拉取文件。
+/// 接收端（Android）HTTP 客户端，向发送端 PC 拉取文件 / 发起配对。
 class ReceiverClient {
   final String address;
   final int port;
@@ -20,6 +20,24 @@ class ReceiverClient {
 
   Uri _uri(String path, [Map<String, String>? query]) =>
       Uri(scheme: 'http', host: address, port: port, path: path, queryParameters: query);
+
+  /// 向对端发起配对请求，返回是否被接受。
+  Future<bool> sendPairRequest(Map<String, dynamic> selfInfo) async {
+    final client = _client();
+    try {
+      final req = await client.postUrl(_uri('/pair-request'));
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode(selfInfo));
+      final res = await req.close();
+      final text = await res.transform(utf8.decoder).join();
+      final j = jsonDecode(text) as Map<String, dynamic>;
+      return j['accepted'] == true;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close();
+    }
+  }
 
   /// 拉取某个映射在发送端的完整索引（相对路径列表）。
   Future<List<FileEntry>> getIndex(String mappingName) async {

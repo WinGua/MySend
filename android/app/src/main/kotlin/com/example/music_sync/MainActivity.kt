@@ -14,6 +14,8 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyFullscreen()
+        // 启动后台保活服务（前台服务 + 常驻通知），保持局域网接收服务在线。
+        SyncKeepAliveService.start(this)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

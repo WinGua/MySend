@@ -2,6 +2,8 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:fluent_ui/fluent_ui.dart';
 
+import '../app.dart';
+import '../app_scope.dart';
 import '../core/utils.dart';
 import 'pages/home_page.dart';
 import 'pages/mappings_page.dart';
@@ -19,12 +21,83 @@ class Shell extends StatefulWidget {
 
 class _ShellState extends State<Shell> {
   int _index = 0;
+  bool _handlingPair = false;
 
   static const List<Widget> _pages = <Widget>[
     HomePage(),
     MappingsPage(),
     SettingsPage(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    scope.addListener(_onScopeChanged);
+  }
+
+  @override
+  void dispose() {
+    scope.removeListener(_onScopeChanged);
+    super.dispose();
+  }
+
+  void _onScopeChanged() {
+    if (!mounted) return;
+    final r = scope.pairRequest;
+    if (r != null && !_handlingPair) {
+      _handlingPair = true;
+      _showPairDialog(r);
+    } else if (r == null) {
+      _handlingPair = false;
+    }
+    setState(() {});
+  }
+
+  /// 弹出连接确认弹窗，用户选择后回填结果。
+  Future<void> _showPairDialog(PairRequest request) async {
+    final ctx = appNavigatorKey.currentContext;
+    if (ctx == null) {
+      scope.resolvePairRequest(false);
+      return;
+    }
+    final accept = await showDialog<bool>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) => ContentDialog(
+        title: const Text('连接请求'),
+        content: Text(
+          '「${request.requester.name}」\n'
+          '${request.requester.address}:${request.requester.port}'
+          '（${_formLabel(request.requester.form)}）\n'
+          '请求与本机建立连接，是否同意？',
+        ),
+        actions: [
+          Button(
+            child: const Text('拒绝'),
+            onPressed: () => Navigator.pop(dialogCtx, false),
+          ),
+          FilledButton(
+            child: const Text('同意'),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+          ),
+        ],
+      ),
+    );
+    scope.resolvePairRequest(accept ?? false);
+  }
+
+  static String _formLabel(String form) {
+    switch (form) {
+      case 'desktop':
+        return '电脑';
+      case 'tablet':
+        return '平板';
+      case 'phone':
+        return '手机';
+      default:
+        return '设备';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

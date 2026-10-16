@@ -1,26 +1,30 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../../models/device_info.dart';
 import '../../models/sync_mapping.dart';
 import '../local_index_service.dart';
 
-/// 发送端（PC）HTTP 传输服务。
+/// 发送端（PC）HTTP 服务。
 ///
-/// 提供两个接口：
-/// - GET /index?mapping=<name>     指定映射源目录的完整文件索引
-/// - GET /file?mapping=<name>&path=<rel>  下载单个文件
+/// 接口：
+/// - POST /pair-request            接收端发起连接确认
+/// - GET  /index?mapping=<name>     指定映射源目录的完整文件索引
+/// - GET  /file?mapping=<name>&path=<rel>  下载单个文件
 ///
 /// 安全说明：当前为局域网内明文 HTTP（v1 简化）；后续可在此处挂载自签 TLS，
 /// 只需在 [start] 中为 [HttpServer.bind] 传入 [SecurityContext] 即可。
 class SenderServer {
   final int port;
   final List<SyncMapping> Function() mappingsProvider;
+  final Future<bool> Function(PeerDevice requester) onPairRequest;
 
   HttpServer? _server;
 
   SenderServer({
     required this.port,
     required this.mappingsProvider,
+    required this.onPairRequest,
   });
 
   bool get running => _server != null;
@@ -41,6 +45,9 @@ class SenderServer {
   void _handle(HttpRequest req) async {
     try {
       switch (req.uri.path) {
+        case '/pair-request':
+          await _handlePair(req);
+          break;
         case '/index':
           await _handleIndex(req);
           break;
@@ -52,6 +59,19 @@ class SenderServer {
       }
     } catch (e) {
       _writeJson(req, {'error': '$e'}, status: 500);
+    }
+  }
+
+  Future<void> _handlePair(HttpRequest req) async {
+    final body = await utf8.decoder.bind(req).join();
+    try {
+      final e = jsonDecode(body) as Map<String, dynamic>;
+      final remote = req.connectionInfo?.remoteAddress.address ?? '';
+      final requester = PeerDevice.fromEnvelope(e, remote);
+      final accepted = await onPairRequest(requester);
+      _writeJson(req, {'accepted': accepted});
+    } catch (_) {
+      _writeJson(req, {'accepted': false}, status: 400);
     }
   }
 

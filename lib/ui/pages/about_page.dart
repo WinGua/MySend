@@ -54,15 +54,19 @@ class AboutPage extends StatelessWidget {
                             ),
                             _section(
                               '功能特性',
-                              '· 局域网设备自动发现，支持手动 IP 配对\n'
+                              '· 局域网设备自动发现 + 扫码配对\n'
+                              '· 连接确认：一方发起连接，对端弹窗确认后建立连接\n'
+                              '· 电脑端 / 手机端均可发起对比与同步\n'
                               '· 多组目录映射，两端根目录可独立配置\n'
                               '· 只同步新增文件，避免重复覆盖\n'
+                              '· 手机端前台服务保活，切后台不中断\n'
                               '· Windows 11 磨砂玻璃风格界面，双端一致',
                             ),
                             _section(
                               '技术栈',
                               '· Flutter / Dart\n'
                               '· fluent_ui（Windows 风格 UI）\n'
+                              '· 二维码 / 扫码配对（qr_flutter + mobile_scanner）\n'
                               '· 局域网明文 HTTP 传输（后续可扩展加密）',
                             ),
                             _section(

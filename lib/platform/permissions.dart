@@ -21,6 +21,28 @@ Future<bool> ensureFileAccess() async {
   }
 }
 
+/// 请求后台保活所需的「通知」权限（Android 13+ 显示前台服务通知）。
+Future<bool> ensureNotificationPermission() async {
+  if (!isAndroid) return true;
+  try {
+    final status = await Permission.notification.request();
+    return status.isGranted;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// 请求忽略电池优化（加入白名单），避免后台被 Doze 休眠。
+Future<bool> requestBatteryOptimizationExemption() async {
+  if (!isAndroid) return true;
+  try {
+    final status = await Permission.ignoreBatteryOptimizations.request();
+    return status.isGranted;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// 打开系统设置中的「所有文件访问」页面（当权限被拒绝时引导用户）。
 Future<void> openManageStorageSettings() async {
   if (!isAndroid) return;

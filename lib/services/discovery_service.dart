@@ -13,7 +13,7 @@ import '../models/device_info.dart';
 /// 说明：组播（multicast）在部分 Android 上需要额外的 WifiManager MulticastLock，
 /// 且路由器的组播转发行为千差万别。这里改用更稳的 UDP 广播（255.255.255.255，
 /// 并额外向每个本机 IPv4 网段的 /24 广播地址发送），对家庭局域网覆盖更可靠；
-/// 无法广播到的场景，UI 提供「手动输入 IP」兜底。
+/// 无法广播到的场景，由「扫码配对」兜底。
 class DiscoveryService extends ChangeNotifier {
   final String deviceId;
   final String deviceName;
@@ -32,9 +32,18 @@ class DiscoveryService extends ChangeNotifier {
     required this.transferPort,
   });
 
-  /// 当前发现的设备列表（含手动录入的）。id 为键去重。
+  /// 当前发现的设备列表，id 为键去重。
   Iterable<PeerDevice> get devices =>
       _devices.values.toList()..sort((a, b) => a.name.compareTo(b.name));
+
+  /// 把「扫码配对」或「连接确认」得到的设备加入列表
+  /// （无广播心跳也保留，直至广播接管；[connected] 标记为已连接）。
+  void addScanned(PeerDevice d, {bool connected = false}) {
+    final existed = _devices[d.id];
+    final keep = (existed?.connected ?? false) || connected;
+    _devices[d.id] = keep ? d.copyWith(connected: true) : d;
+    notifyListeners();
+  }
 
   bool get running => _socket != null;
 
@@ -56,7 +65,7 @@ class DiscoveryService extends ChangeNotifier {
       _cleanupTimer = Timer.periodic(const Duration(seconds: 10), (_) {
         final now = DateTime.now();
         final expired = _devices.values
-            .where((d) => !d.manual && now.difference(d.lastSeen).inSeconds > 15)
+            .where((d) => now.difference(d.lastSeen).inSeconds > 15)
             .map((d) => d.id)
             .toList();
         if (expired.isNotEmpty) {
@@ -94,7 +103,11 @@ class DiscoveryService extends ChangeNotifier {
       if (json['t'] != 'hello') return; // 无关报文
       final peer = PeerDevice.fromEnvelope(json, datagram.address.address);
       if (peer.id.isEmpty || peer.id == deviceId) return; // 跳过自己/无效
-      _devices[peer.id] = peer;
+      final existed = _devices[peer.id];
+      // 已连接状态需跨广播心跳保持，不被后续报文重置。
+      _devices[peer.id] = (existed != null && existed.connected)
+          ? peer.copyWith(connected: true)
+          : peer;
       notifyListeners();
     } catch (_) {
       // 忽略无法解析的报文。
@@ -109,6 +122,7 @@ class DiscoveryService extends ChangeNotifier {
       'id': deviceId,
       'name': deviceName,
       'platform': platformTag,
+      'form': deviceForm,
       'sender': isSender,
       'port': transferPort,
     }));

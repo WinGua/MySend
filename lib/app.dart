@@ -3,6 +3,9 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'ui/theme.dart';
 import 'ui/shell.dart';
 
+/// 全局导航键，用于在非 widget 上下文（如服务的连接确认回调）中弹窗。
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
+
 class MusicSyncApp extends StatelessWidget {
   const MusicSyncApp({super.key});
 
@@ -12,6 +15,7 @@ class MusicSyncApp extends StatelessWidget {
       title: 'MySend',
       theme: AppTheme.dark(),
       debugShowCheckedModeBanner: false,
+      navigatorKey: appNavigatorKey,
       home: const Shell(),
     );
   }
