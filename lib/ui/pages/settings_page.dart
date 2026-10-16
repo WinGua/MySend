@@ -71,7 +71,7 @@ class _SettingsPageState extends State<SettingsPage> {
           severity: ok ? InfoBarSeverity.success : InfoBarSeverity.warning,
           title: Text(ok ? '已允许后台运行' : '未完全允许后台运行，切后台可能被系统关闭'),
           action: IconButton(
-            icon: const Icon(FluentIcons.dismiss),
+            icon: const Icon(FluentIcons.chrome_close),
             onPressed: close,
           ),
         ),

@@ -41,7 +41,7 @@ class WindowTitleBar extends StatelessWidget {
             onTap: () => windowManager.minimize(),
           ),
           _WinButton(
-            icon: FluentIcons.chrome_maximize,
+            icon: FluentIcons.chrome_restore,
             tooltip: '最大化',
             onTap: () async {
               if (await windowManager.isMaximized()) {

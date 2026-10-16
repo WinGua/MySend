@@ -32,6 +32,11 @@ dependencies:
   uuid: ^4.4.0
   url_launcher: ^6.2.5
 
+dependency_overrides:
+  # package_info_plus 9.x 要求 AGP>=8.12.1 / Gradle>=8.13 / Kotlin 2.2，超出本工程 Flutter 3.24 工具链；
+  # 锁回 8.x 以匹配现有 Android 构建环境（API 兼容）。
+  package_info_plus: ^8.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

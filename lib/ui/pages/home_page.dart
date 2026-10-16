@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -10,6 +12,7 @@ import '../../services/local_index_service.dart';
 import '../../services/sync_engine.dart';
 import '../../services/transfer/receiver_client.dart';
 import '../../services/transfer/sender_client.dart';
+import '../../platform/wifi_hotspot.dart';
 import '../widgets/glass.dart';
 import '../widgets/qr_widgets.dart';
 
@@ -53,7 +56,7 @@ class _HomePageState extends State<HomePage> {
         severity: severity,
         title: Text(msg),
         action: IconButton(
-          icon: const Icon(FluentIcons.dismiss),
+          icon: const Icon(FluentIcons.chrome_close),
           onPressed: close,
         ),
       ),
@@ -88,6 +91,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// 手机端扫码添加设备并立即发起连接。
+  /// 先判断两端是否同一局域网：可达则直接连接；不可达则走「热点组网」。
   Future<void> _scanPair() async {
     final parsed = await Navigator.push<Map<String, dynamic>>(
       context,
@@ -101,9 +105,37 @@ class _HomePageState extends State<HomePage> {
     final ip = parsed['ip'] as String? ?? '';
     if (ip.isEmpty) return;
     final peer = PeerDevice.fromEnvelope(parsed, ip);
-    scope.discovery?.addScanned(peer);
-    setState(() => _peer = peer);
-    await _connect(peer);
+
+    final reachable = await canReach(ip, peer.port);
+    if (!mounted) return;
+    if (reachable) {
+      scope.discovery?.addScanned(peer);
+      setState(() => _peer = peer);
+      await _connect(peer);
+    } else {
+      await _hotspotPair(peer);
+    }
+  }
+
+  /// 热点组网：手机开仅本地热点，电脑自动连接后复用自动发现完成配对。
+  Future<void> _hotspotPair(PeerDevice pc) async {
+    final ssid = hotspotSsid(pc.id);
+    final passphrase = hotspotPassphrase(pc.id);
+    final found = await showDialog<PeerDevice>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) =>
+          _HotspotPairDialog(pc: pc, ssid: ssid, passphrase: passphrase),
+    );
+    if (!mounted) return;
+    if (found != null) {
+      scope.discovery?.addScanned(found);
+      setState(() => _peer = found);
+      await _connect(found);
+    } else {
+      _toast('热点组网未完成，可重试，或在弹窗内按提示让电脑手动连接。',
+          severity: InfoBarSeverity.warning);
+    }
   }
 
   /// 电脑端展示连接二维码。
@@ -491,7 +523,7 @@ class _LanHint extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Row(
       children: [
-        Icon(FluentIcons.wifi_warning, size: 20, color: Color(0xFF4A9EFF)),
+        Icon(FluentIcons.wifi, size: 20, color: Color(0xFF4A9EFF)),
         SizedBox(width: 10),
         Expanded(
           child: Text(
@@ -581,6 +613,122 @@ class _SyncDialogState extends State<_SyncDialog> {
             child: const Text('关闭'),
             onPressed: () => Navigator.pop(context, err == null),
           ),
+      ],
+    );
+  }
+}
+
+/// 热点组网弹窗：开启仅本地热点并轮询电脑是否已接入，成功返回发现的电脑。
+class _HotspotPairDialog extends StatefulWidget {
+  final PeerDevice pc;
+  final String ssid;
+  final String passphrase;
+
+  const _HotspotPairDialog({
+    required this.pc,
+    required this.ssid,
+    required this.passphrase,
+  });
+
+  @override
+  State<_HotspotPairDialog> createState() => _HotspotPairDialogState();
+}
+
+class _HotspotPairDialogState extends State<_HotspotPairDialog> {
+  String _status = '正在开启热点…';
+  String? _error;
+  Timer? _timer;
+  int _elapsed = 0;
+  bool _polling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  Future<void> _start() async {
+    final ok = await WifiHotspot.start(
+      ssid: widget.ssid,
+      passphrase: widget.passphrase,
+    );
+    if (!mounted) return;
+    if (!ok) {
+      setState(() => _error = '无法开启热点，请确认已授予「附近设备」权限后重试。');
+      return;
+    }
+    setState(() => _status = '热点已开启，等待电脑自动连接…');
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
+  }
+
+  Future<void> _poll() async {
+    if (_polling) return;
+    _polling = true;
+    try {
+      _elapsed += 2;
+      final devices = scope.discovery?.devices ?? const <PeerDevice>[];
+      for (final d in devices) {
+        if (d.id != widget.pc.id) continue;
+        final reachable = await canReach(d.address, d.port);
+        if (reachable) {
+          _timer?.cancel();
+          if (mounted) Navigator.pop(context, d);
+          return;
+        }
+      }
+      if (_elapsed >= 90 && mounted) {
+        setState(() => _status = '等待超时，请确认电脑是否已连接下方热点。');
+      }
+    } finally {
+      _polling = false;
+    }
+  }
+
+  void _cancel() {
+    _timer?.cancel();
+    WifiHotspot.stop();
+    Navigator.pop(context);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final err = _error;
+    return ContentDialog(
+      title: const Text('热点组网'),
+      content: SizedBox(
+        width: 340,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (err != null) ...[
+              Text(err,
+                  style: const TextStyle(fontSize: 13, color: Color(0xFFE9AA7E))),
+            ] else ...[
+              Text(_status,
+                  style: const TextStyle(fontSize: 13, color: Color(0xFFc0c0c0))),
+              const SizedBox(height: 14),
+              const Text('若电脑未能自动连接，可在电脑 Wi-Fi 中手动连接：',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
+              const SizedBox(height: 4),
+              Text('热点名称：${widget.ssid}',
+                  style:
+                      const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              Text('热点密码：${widget.passphrase}',
+                  style:
+                      const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        Button(child: const Text('取消'), onPressed: _cancel),
       ],
     );
   }

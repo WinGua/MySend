@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -6,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../app_scope.dart';
 import '../../core/constants.dart';
 import '../../core/utils.dart';
+import '../../platform/wifi_connect.dart';
 
 /// 构造配对二维码的内容：`mysend://pair?ip=...&...`。
 String buildPairUri(Map<String, dynamic> self, String ip) {
@@ -58,6 +61,7 @@ class QrPairDialog extends StatefulWidget {
 class _QrPairDialogState extends State<QrPairDialog> {
   String? _ip;
   String? _uri;
+  String? _netStatus;
 
   @override
   void initState() {
@@ -73,6 +77,34 @@ class _QrPairDialogState extends State<QrPairDialog> {
         _uri = buildPairUri(scope.selfDescribe(), ip);
       });
     }
+    _startAutoConnect();
+  }
+
+  /// 扫码后若两端不在同一网络，电脑端持续尝试连接「配对热点」完成自动组网。
+  Future<void> _startAutoConnect() async {
+    if (!isWindows) return;
+    final id = scope.config.config.deviceId;
+    final ssid = hotspotSsid(id);
+    final passphrase = hotspotPassphrase(id);
+    if (!mounted) return;
+    setState(() => _netStatus = '若手机与电脑不在同一网络，扫码后将自动开启热点组网。');
+    final profiled = await configureWifiProfile(ssid, passphrase);
+    if (!profiled) {
+      if (mounted) {
+        setState(() => _netStatus = '电脑未能创建热点配置，可让手机显示热点后手动连接。');
+      }
+      return;
+    }
+    for (var i = 0; i < 30; i++) {
+      final ok = await connectToWifi(ssid);
+      if (ok) {
+        if (mounted) setState(() => _netStatus = '已连接到配对热点，等待手机发现本机…');
+        return;
+      }
+      await Future.delayed(const Duration(seconds: 4));
+      if (!mounted) return;
+    }
+    if (mounted) setState(() => _netStatus = '等待超时，可让手机重试或手动连接。');
   }
 
   @override
@@ -112,6 +144,13 @@ class _QrPairDialogState extends State<QrPairDialog> {
               Text(
                 '本机地址 $_ip:${scope.config.config.transferPort}',
                 style: const TextStyle(fontSize: 13, color: Color(0xFFc0c0c0)),
+              ),
+            ],
+            if (_netStatus != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _netStatus!,
+                style: const TextStyle(fontSize: 12, color: Color(0xFF4A9EFF)),
               ),
             ],
           ],
