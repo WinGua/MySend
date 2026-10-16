@@ -33,9 +33,10 @@ dependencies:
   url_launcher: ^6.2.5
 
 dependency_overrides:
-  # package_info_plus 9.x 要求 AGP>=8.12.1 / Gradle>=8.13 / Kotlin 2.2，超出本工程 Flutter 3.24 工具链；
-  # 锁回 8.x 以匹配现有 Android 构建环境（API 兼容）。
+  # 以下插件的新版本要求 AGP>=8.12.1 / Gradle>=8.13 / Kotlin 2.2，超出本工程 Flutter 3.24 工具链；
+  # 统一锁回兼容版本，避免 "unknown property 'flutter'" 构建失败（API 均兼容）。
   package_info_plus: ^8.0.0
+  wakelock_plus: 1.2.8
 
 dev_dependencies:
   flutter_test:
