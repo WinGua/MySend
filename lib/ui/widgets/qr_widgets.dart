@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart' show Colors;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -100,7 +99,7 @@ class _QrPairDialogState extends State<QrPairDialog> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Color(0xFFFFFFFF),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: QrImageView(
@@ -185,7 +184,7 @@ class _QrScannerPageState extends State<QrScannerPage> {
                 ),
                 child: const Text(
                   '对准电脑端「创建连接二维码」进行扫描',
-                  style: TextStyle(fontSize: 13, color: Colors.white),
+                  style: TextStyle(fontSize: 13, color: Color(0xFFFFFFFF)),
                 ),
               ),
             ),
