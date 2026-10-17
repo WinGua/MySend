@@ -233,7 +233,6 @@ Future<T?> showGlassDialog<T>({
     barrierLabel: '',
     barrierColor: const Color(0x8A000000),
     transitionDuration: const Duration(milliseconds: 220),
-    reverseTransitionDuration: const Duration(milliseconds: 180),
     pageBuilder: (dialogContext, animation, secondaryAnimation) =>
         builder(dialogContext),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
