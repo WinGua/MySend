@@ -83,24 +83,26 @@ class _QrPairDialogState extends State<QrPairDialog> {
     final uri = _uri;
     return GlassDialog(
       title: '创建连接二维码',
-      content: SizedBox(
-        width: 300,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              '用手机端「扫码添加设备」扫描此二维码，即可发起连接。',
-              style: TextStyle(fontSize: 13, color: Color(0xFFc0c0c0)),
-            ),
-            const SizedBox(height: 16),
-            if (uri == null)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('未能获取本机 IP，请确认已连接局域网。'),
-              )
-            else ...[
-              Container(
-                padding: const EdgeInsets.all(12),
+      maxWidth: 300,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            '用手机端「扫码添加设备」扫描此二维码发起连接。',
+            maxLines: 2,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: Color(0xFFc0c0c0)),
+          ),
+          const SizedBox(height: 16),
+          if (uri == null)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text('未能获取本机 IP，请确认已连接局域网。'),
+            )
+          else ...[
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: Color(0xFFFFFFFF),
                   borderRadius: BorderRadius.circular(12),
@@ -108,17 +110,19 @@ class _QrPairDialogState extends State<QrPairDialog> {
                 child: QrImageView(
                   data: uri!,
                   version: QrVersions.auto,
-                  size: 220,
+                  size: 200,
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
+            ),
+            const SizedBox(height: 12),
+            Center(
+              child: Text(
                 '本机地址 $_ip:${scope.config.config.transferPort}',
                 style: const TextStyle(fontSize: 13, color: Color(0xFFc0c0c0)),
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
       actions: [
         FilledButton(

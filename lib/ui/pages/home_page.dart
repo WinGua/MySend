@@ -198,6 +198,7 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (ctx) => GlassDialog(
         title: '对比完成 · ${m.name}',
+        maxWidth: 400,
         content: SizedBox(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -631,6 +632,7 @@ class _SyncDialogState extends State<_SyncDialog> {
       title: finished
           ? (err != null ? '同步失败' : '同步完成')
           : '同步中 · ${widget.mappingName}',
+      maxWidth: 400,
       content: SizedBox(
         child: Column(
           mainAxisSize: MainAxisSize.min,

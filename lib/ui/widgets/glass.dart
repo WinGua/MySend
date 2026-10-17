@@ -160,7 +160,7 @@ class GlassDialog extends StatelessWidget {
     required this.title,
     required this.content,
     this.actions = const [],
-    this.maxWidth = 380,
+    this.maxWidth = 340,
   });
 
   @override
