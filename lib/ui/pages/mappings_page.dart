@@ -47,8 +47,8 @@ class _MappingsPageState extends State<MappingsPage> {
   Future<void> _delete(SyncMapping m) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => ContentDialog(
-        title: const Text('删除映射'),
+      builder: (ctx) => GlassDialog(
+        title: '删除映射',
         content: Text('确定删除映射「${m.name}」吗？不会删除任何实际文件。'),
         actions: [
           Button(child: const Text('取消'), onPressed: () => Navigator.pop(ctx, false)),
@@ -187,8 +187,9 @@ class _MappingFormDialogState extends State<_MappingFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return ContentDialog(
-      title: Text(widget.existing == null ? '添加映射' : '编辑映射'),
+    return GlassDialog(
+      title: widget.existing == null ? '添加映射' : '编辑映射',
+      maxWidth: 460,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

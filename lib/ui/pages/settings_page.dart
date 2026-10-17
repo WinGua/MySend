@@ -9,7 +9,9 @@ import '../../app_scope.dart';
 import '../../core/constants.dart';
 import '../../core/utils.dart';
 import '../../platform/permissions.dart';
+import '../widgets/glass.dart';
 import 'about_page.dart';
+import 'sync_log_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -61,27 +63,45 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _requestBackground() async {
-    final battery = await requestBatteryOptimizationExemption();
+    // 通知权限是前台服务常驻通知的关键；电池优化白名单仅作为更强保活的建议。
+    // 部分国产系统（OriginOS 等）对「忽略电池优化」的授权结果返回不可靠，
+    // 因此以通知权限结果作为「后台保活是否就绪」的主要依据，避免误报「未成功」。
     final notif = await ensureNotificationPermission();
-    final ok = battery && notif;
-    if (mounted) {
-      displayInfoBar(
-        context,
-        builder: (context, close) => InfoBar(
-          severity: ok ? InfoBarSeverity.success : InfoBarSeverity.warning,
-          title: Text(ok ? '已允许后台运行' : '未完全允许后台运行，切后台可能被系统关闭'),
-          action: IconButton(
-            icon: const Icon(FluentIcons.chrome_close),
-            onPressed: close,
-          ),
-        ),
-      );
+    final battery = await requestBatteryOptimizationExemption();
+    if (!mounted) return;
+    final InfoBarSeverity sev;
+    final String msg;
+    if (notif) {
+      sev = InfoBarSeverity.success;
+      msg = battery
+          ? '后台保活已开启'
+          : '后台保活已开启；可再到系统电池/自启动设置中允许本应用后台运行，以获得更稳定保活。';
+    } else {
+      sev = InfoBarSeverity.warning;
+      msg = '通知权限未授权，切后台可能被系统关闭，请到系统设置开启通知。';
     }
+    displayInfoBar(
+      context,
+      builder: (context, close) => InfoBar(
+        severity: sev,
+        title: Text(msg),
+        action: IconButton(
+          icon: const Icon(FluentIcons.chrome_close),
+          onPressed: close,
+        ),
+      ),
+    );
   }
 
   void _openAbout() {
     Navigator.of(context).push(
       material.MaterialPageRoute(builder: (_) => const AboutPage()),
+    );
+  }
+
+  void _openLog() {
+    Navigator.of(context).push(
+      material.MaterialPageRoute(builder: (_) => const SyncLogPage()),
     );
   }
 
@@ -105,8 +125,8 @@ class _SettingsPageState extends State<SettingsPage> {
       if (cmp > 0) {
         final go = await showDialog<bool>(
           context: context,
-          builder: (ctx) => ContentDialog(
-            title: const Text('发现新版本'),
+          builder: (ctx) => GlassDialog(
+            title: '发现新版本',
             content:
                 Text('最新版本 v$latest，当前版本 v${AppConstants.currentVersion}。'),
             actions: [
@@ -125,8 +145,8 @@ class _SettingsPageState extends State<SettingsPage> {
       } else {
         await showDialog(
           context: context,
-          builder: (ctx) => ContentDialog(
-            title: const Text('已是最新版本'),
+          builder: (ctx) => GlassDialog(
+            title: '已是最新版本',
             content: Text('当前版本 v${AppConstants.currentVersion} 已是最新。'),
             actions: [
               FilledButton(
@@ -141,8 +161,8 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       await showDialog(
         context: context,
-        builder: (ctx) => ContentDialog(
-          title: const Text('检查失败'),
+        builder: (ctx) => GlassDialog(
+          title: '检查失败',
           content: const Text('无法连接 GitHub，请检查网络后重试。'),
           actions: [
             FilledButton(
@@ -232,26 +252,21 @@ class _SettingsPageState extends State<SettingsPage> {
             const Text('同步日志',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
-            if (logs.isEmpty)
-              const Text('暂无同步记录。', style: TextStyle(color: Color(0xFF9a9a9a)))
-            else ...logs.map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    '${e.mappingName} · ${_fmtTime(e.time)} · '
-                    '${e.fileCount} 个文件 · ${_fmtBytes(e.totalBytes)}',
-                    style: const TextStyle(fontSize: 13, color: Color(0xFFc0c0c0)),
-                  ),
-                )),
-            if (logs.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Button(
-                  child: const Text('清空日志'),
-                  onPressed: () => scope.syncLog.clear(),
-                ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Button(
+                child: const Text('查看同步日志'),
+                onPressed: _openLog,
               ),
-            ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              logs.isEmpty
+                  ? '暂无同步记录。'
+                  : '最近一条：${logs.first.mappingName} · ${_fmtTime(logs.first.time)}'
+                      ' · ${logs.first.fileCount} 个文件 · ${_fmtBytes(logs.first.totalBytes)}',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
+            ),
             const SizedBox(height: 32),
             const Text('更多',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),

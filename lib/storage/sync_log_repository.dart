@@ -11,12 +11,14 @@ class SyncLogEntry {
   final DateTime time;
   final int fileCount; // 同步文件总数
   final int totalBytes; // 总大小
+  final List<String> files; // 本次同步的文件名称（相对路径最后一段）
 
   const SyncLogEntry({
     required this.mappingName,
     required this.time,
     required this.fileCount,
     required this.totalBytes,
+    this.files = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -24,6 +26,7 @@ class SyncLogEntry {
         'time': time.millisecondsSinceEpoch,
         'count': fileCount,
         'bytes': totalBytes,
+        'files': files,
       };
 
   factory SyncLogEntry.fromJson(Map<String, dynamic> j) => SyncLogEntry(
@@ -31,6 +34,9 @@ class SyncLogEntry {
         time: DateTime.fromMillisecondsSinceEpoch((j['time'] as num?)?.toInt() ?? 0),
         fileCount: (j['count'] as num?)?.toInt() ?? 0,
         totalBytes: (j['bytes'] as num?)?.toInt() ?? 0,
+        files: (j['files'] as List<dynamic>? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
       );
 }
 
@@ -84,11 +90,12 @@ class SyncLogRepository extends ChangeNotifier {
     }
   }
 
-  /// 记录一次同步（任务名、时间、文件数、总大小）。
+  /// 记录一次同步（任务名、时间、文件数、总大小、文件名列表）。
   Future<void> add({
     required String name,
     required int fileCount,
     required int totalBytes,
+    List<String> files = const [],
   }) async {
     _entries.insert(
       0,
@@ -97,6 +104,7 @@ class SyncLogRepository extends ChangeNotifier {
         time: DateTime.now(),
         fileCount: fileCount,
         totalBytes: totalBytes,
+        files: files,
       ),
     );
     prune();

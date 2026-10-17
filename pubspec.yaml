@@ -34,12 +34,12 @@ dependencies:
 
 dependency_overrides:
   # 以下插件的新版本要求 AGP>=8.12.1 / Gradle>=8.13 / Kotlin 2.2 / compileSdk 35，
-  # 超出本工程 Flutter 3.24.5 + AGP 8.1.0 工具链；统一锁回兼容版本，
+  # 超出本工程 Flutter 3.24.5 + AGP 8.5.2 工具链；统一锁回兼容版本，
   # 避免 "unknown property 'flutter'" 及 API 符号污染导致的构建失败（API 均兼容）。
   package_info_plus: ^8.0.0
   wakelock_plus: 1.2.8
   # 2.0.22 起 AGP 8.5.1、2.0.25 起 compileSdk 35、2.0.29 起 Kotlin 2.2、2.0.34 起 Kotlin DSL，
-  # 均会污染 AGP 8.1.0 的 SDK 符号解析（导致 API 33 接口如 SoftApConfiguration.Builder 不可见）。
+  # 均会污染 AGP 8.5.2 的 SDK 符号解析（导致 API 33 接口如 SoftApConfiguration.Builder 不可见）。
   # 2.0.21 为最后一批 compileSdk 34 + AGP 7.2.1 + Groovy 的兼容版本。
   flutter_plugin_android_lifecycle: 2.0.21
 

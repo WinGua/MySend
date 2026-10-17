@@ -63,19 +63,6 @@ bool isSafeWithin(String root, String relativePath) {
   return normalizedChild == normalizedRoot || normalizedChild.startsWith(prefix);
 }
 
-/// 由设备 id 派生热点 SSID（电脑端与手机端按 id 一致派生，用于扫码后自动组网）。
-String hotspotSsid(String deviceId) {
-  final hex = deviceId.replaceAll('-', '');
-  final suffix = hex.length >= 6 ? hex.substring(0, 6) : hex;
-  return 'MySend-$suffix';
-}
-
-/// 由设备 id 派生热点密码（WPA2，8-63 位字符）。
-String hotspotPassphrase(String deviceId) {
-  final hex = deviceId.replaceAll('-', '');
-  return hex.length >= 12 ? hex.substring(0, 12) : hex.padRight(12, '0');
-}
-
 /// 探测某个地址端口是否可达（用于判断两端是否在同一局域网）。
 Future<bool> canReach(String address, int port) async {
   try {

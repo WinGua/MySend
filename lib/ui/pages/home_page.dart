@@ -6,13 +6,13 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../app_scope.dart';
 import '../../core/utils.dart';
 import '../../models/device_info.dart';
+import '../../models/file_entry.dart';
 import '../../models/sync_mapping.dart';
 import '../../models/sync_plan.dart';
 import '../../services/local_index_service.dart';
 import '../../services/sync_engine.dart';
 import '../../services/transfer/receiver_client.dart';
 import '../../services/transfer/sender_client.dart';
-import '../../platform/wifi_hotspot.dart';
 import '../widgets/glass.dart';
 import '../widgets/qr_widgets.dart';
 
@@ -117,15 +117,12 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 热点组网：手机开仅本地热点，电脑自动连接后复用自动发现完成配对。
+  /// 热点组网：引导用户在系统设置开启便携式热点，电脑连接后复用自动发现完成配对。
   Future<void> _hotspotPair(PeerDevice pc) async {
-    final ssid = hotspotSsid(pc.id);
-    final passphrase = hotspotPassphrase(pc.id);
     final found = await showDialog<PeerDevice>(
       context: context,
       barrierDismissible: false,
-      builder: (_) =>
-          _HotspotPairDialog(pc: pc, ssid: ssid, passphrase: passphrase),
+      builder: (_) => _HotspotPairDialog(pc: pc),
     );
     if (!mounted) return;
     if (found != null) {
@@ -133,7 +130,7 @@ class _HomePageState extends State<HomePage> {
       setState(() => _peer = found);
       await _connect(found);
     } else {
-      _toast('热点组网未完成，可重试，或在弹窗内按提示让电脑手动连接。',
+      _toast('热点组网未完成，请确认电脑已连接手机热点后重试。',
           severity: InfoBarSeverity.warning);
     }
   }
@@ -187,8 +184,8 @@ class _HomePageState extends State<HomePage> {
     final names = plan.newOnly.map((e) => e.relativePath.split('/').last).toList();
     await showDialog(
       context: context,
-      builder: (ctx) => ContentDialog(
-        title: Text('对比完成 · ${m.name}'),
+      builder: (ctx) => GlassDialog(
+        title: '对比完成 · ${m.name}',
         content: SizedBox(
           width: 360,
           child: Column(
@@ -238,14 +235,15 @@ class _HomePageState extends State<HomePage> {
     }
     setState(() => _syncing[m.id] = true);
 
-    Future<void> runIt(void Function(int done, int total) onProgress) async {
+    Future<void> runIt(
+        void Function(int done, int total, FileEntry current) onProgress) async {
       if (isSender) {
         final client = SenderClient(address: peer.address, port: peer.port);
         await SyncEngine.push(
           mapping: m,
           client: client,
           files: plan.toSend,
-          onProgress: (done, total, current) => onProgress(done, total),
+          onProgress: onProgress,
         );
       } else {
         final client = ReceiverClient(address: peer.address, port: peer.port);
@@ -253,7 +251,7 @@ class _HomePageState extends State<HomePage> {
           mapping: m,
           client: client,
           files: plan.toSend,
-          onProgress: (done, total, current) => onProgress(done, total),
+          onProgress: onProgress,
         );
       }
     }
@@ -266,7 +264,11 @@ class _HomePageState extends State<HomePage> {
     final success = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _SyncDialog(mappingName: m.name, run: runIt),
+      builder: (_) => _SyncDialog(
+        mappingName: m.name,
+        totalBytes: plan.totalBytes,
+        run: runIt,
+      ),
     );
     if (isAndroid) {
       try {
@@ -279,6 +281,7 @@ class _HomePageState extends State<HomePage> {
         name: m.name,
         fileCount: plan.toSend.length,
         totalBytes: plan.totalBytes,
+        files: plan.toSend.map((e) => e.relativePath.split('/').last).toList(),
       );
       if (mounted) {
         setState(() {
@@ -495,7 +498,7 @@ class _HomePageState extends State<HomePage> {
       case 'tablet':
         return FluentIcons.tablet;
       case 'phone':
-        return FluentIcons.phone;
+        return FluentIcons.cell_phone;
       default:
         return FluentIcons.devices2;
     }
@@ -513,6 +516,15 @@ class _HomePageState extends State<HomePage> {
         return '设备';
     }
   }
+}
+
+String _fmtBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }
 
 /// 局域网依赖提示条。
@@ -536,12 +548,18 @@ class _LanHint extends StatelessWidget {
   }
 }
 
-/// 同步进度弹窗：进度条 + 失败原因 / 成功手动关闭。
+/// 同步进度弹窗：进度条 + 文件名 / 数量 / 大小 / 速度，失败原因 / 成功手动关闭。
 class _SyncDialog extends StatefulWidget {
   final String mappingName;
-  final Future<void> Function(void Function(int done, int total)) run;
+  final int totalBytes;
+  final Future<void> Function(
+      void Function(int done, int total, FileEntry current)) run;
 
-  const _SyncDialog({required this.mappingName, required this.run});
+  const _SyncDialog({
+    required this.mappingName,
+    required this.totalBytes,
+    required this.run,
+  });
 
   @override
   State<_SyncDialog> createState() => _SyncDialogState();
@@ -550,21 +568,28 @@ class _SyncDialog extends StatefulWidget {
 class _SyncDialogState extends State<_SyncDialog> {
   int _done = 0;
   int _total = 0;
+  int _sentBytes = 0;
+  String _currentName = '';
   bool _running = true;
   String? _error;
+  final Stopwatch _watch = Stopwatch();
 
   @override
   void initState() {
     super.initState();
+    _watch.start();
     _start();
   }
 
   Future<void> _start() async {
     try {
-      await widget.run((done, total) {
-        if (mounted) setState(() {
+      await widget.run((done, total, current) {
+        if (!mounted) return;
+        setState(() {
           _done = done;
           _total = total;
+          _sentBytes += current.size;
+          _currentName = current.relativePath.split('/').last;
         });
       });
       if (mounted) setState(() => _running = false);
@@ -581,13 +606,15 @@ class _SyncDialogState extends State<_SyncDialog> {
     final finished = !_running;
     final err = _error;
     final progress = _total == 0 ? 0.0 : (_done / _total).clamp(0.0, 1.0);
+    final seconds = _watch.elapsedMilliseconds / 1000.0;
+    final speed = seconds <= 0 ? 0 : (_sentBytes / seconds);
 
-    return ContentDialog(
-      title: Text(finished
+    return GlassDialog(
+      title: finished
           ? (err != null ? '同步失败' : '同步完成')
-          : '同步中 · ${widget.mappingName}'),
+          : '同步中 · ${widget.mappingName}',
       content: SizedBox(
-        width: 360,
+        width: 380,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -595,14 +622,26 @@ class _SyncDialogState extends State<_SyncDialog> {
             if (err != null) ...[
               Text('同步失败，请重试。\n$err',
                   style: const TextStyle(fontSize: 13, color: Color(0xFFE9AA7E))),
-            ] else if (finished) ...[
-              Text('成功同步 $_done 个文件。',
-                  style: const TextStyle(fontSize: 13, color: Color(0xFFc0c0c0))),
             ] else ...[
-              Text('正在同步 $_done/$_total',
-                  style: const TextStyle(fontSize: 13, color: Color(0xFFc0c0c0))),
-              const SizedBox(height: 14),
               ProgressBar(value: progress),
+              const SizedBox(height: 10),
+              Text('${(progress * 100).toStringAsFixed(0)}%   $_done / $_total 个文件',
+                  style: const TextStyle(fontSize: 13, color: Color(0xFFe0e0e0))),
+              if (_currentName.isNotEmpty && !finished) ...[
+                const SizedBox(height: 4),
+                Text('当前：$_currentName',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
+              ],
+              const SizedBox(height: 4),
+              Text('已传输 ${_fmtBytes(_sentBytes)} / ${_fmtBytes(widget.totalBytes)}',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
+              if (!finished && speed > 0) ...[
+                const SizedBox(height: 2),
+                Text('速度 ${_fmtBytes(speed.round())}/s',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
+              ],
             ],
           ],
         ),
@@ -618,25 +657,18 @@ class _SyncDialogState extends State<_SyncDialog> {
   }
 }
 
-/// 热点组网弹窗：开启仅本地热点并轮询电脑是否已接入，成功返回发现的电脑。
+/// 热点组网弹窗：引导用户在系统设置开启便携式热点，轮询电脑是否接入并自动完成配对。
 class _HotspotPairDialog extends StatefulWidget {
   final PeerDevice pc;
-  final String ssid;
-  final String passphrase;
 
-  const _HotspotPairDialog({
-    required this.pc,
-    required this.ssid,
-    required this.passphrase,
-  });
+  const _HotspotPairDialog({required this.pc});
 
   @override
   State<_HotspotPairDialog> createState() => _HotspotPairDialogState();
 }
 
 class _HotspotPairDialogState extends State<_HotspotPairDialog> {
-  String _status = '正在开启热点…';
-  String? _error;
+  String _status = '请在手机系统设置中开启「便携式热点」…';
   Timer? _timer;
   int _elapsed = 0;
   bool _polling = false;
@@ -644,20 +676,6 @@ class _HotspotPairDialogState extends State<_HotspotPairDialog> {
   @override
   void initState() {
     super.initState();
-    _start();
-  }
-
-  Future<void> _start() async {
-    final ok = await WifiHotspot.start(
-      ssid: widget.ssid,
-      passphrase: widget.passphrase,
-    );
-    if (!mounted) return;
-    if (!ok) {
-      setState(() => _error = '无法开启热点，请确认已授予「附近设备」权限后重试。');
-      return;
-    }
-    setState(() => _status = '热点已开启，等待电脑自动连接…');
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
   }
 
@@ -676,8 +694,8 @@ class _HotspotPairDialogState extends State<_HotspotPairDialog> {
           return;
         }
       }
-      if (_elapsed >= 90 && mounted) {
-        setState(() => _status = '等待超时，请确认电脑是否已连接下方热点。');
+      if (_elapsed >= 120 && mounted) {
+        setState(() => _status = '等待超时，请确认电脑已连接手机热点后重试。');
       }
     } finally {
       _polling = false;
@@ -686,7 +704,6 @@ class _HotspotPairDialogState extends State<_HotspotPairDialog> {
 
   void _cancel() {
     _timer?.cancel();
-    WifiHotspot.stop();
     Navigator.pop(context);
   }
 
@@ -698,32 +715,25 @@ class _HotspotPairDialogState extends State<_HotspotPairDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final err = _error;
-    return ContentDialog(
-      title: const Text('热点组网'),
+    return GlassDialog(
+      title: '热点组网',
       content: SizedBox(
         width: 340,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (err != null) ...[
-              Text(err,
-                  style: const TextStyle(fontSize: 13, color: Color(0xFFE9AA7E))),
-            ] else ...[
-              Text(_status,
-                  style: const TextStyle(fontSize: 13, color: Color(0xFFc0c0c0))),
-              const SizedBox(height: 14),
-              const Text('若电脑未能自动连接，可在电脑 Wi-Fi 中手动连接：',
-                  style: TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
-              const SizedBox(height: 4),
-              Text('热点名称：${widget.ssid}',
-                  style:
-                      const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-              Text('热点密码：${widget.passphrase}',
-                  style:
-                      const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-            ],
+            const Text('当前手机与电脑不在同一网络，请手动组网：',
+                style: TextStyle(fontSize: 13, color: Color(0xFFc0c0c0))),
+            const SizedBox(height: 12),
+            const Text('1. 进入手机「设置 → 便携式热点」，开启热点；',
+                style: TextStyle(fontSize: 13)),
+            const SizedBox(height: 4),
+            const Text('2. 在电脑右下角 Wi-Fi 列表连接该热点（密码见手机热点页）。',
+                style: TextStyle(fontSize: 13)),
+            const SizedBox(height: 12),
+            Text(_status,
+                style: const TextStyle(fontSize: 13, color: Color(0xFF4A9EFF))),
           ],
         ),
       ),

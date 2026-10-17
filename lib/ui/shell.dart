@@ -63,8 +63,8 @@ class _ShellState extends State<Shell> {
     final accept = await showDialog<bool>(
       context: ctx,
       barrierDismissible: false,
-      builder: (dialogCtx) => ContentDialog(
-        title: const Text('连接请求'),
+      builder: (dialogCtx) => GlassDialog(
+        title: '连接请求',
         content: Text(
           '「${request.requester.name}」\n'
           '${request.requester.address}:${request.requester.port}'

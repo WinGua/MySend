@@ -142,3 +142,73 @@ class _PressableScaleState extends State<PressableScale> {
     );
   }
 }
+
+/// 磨砂玻璃弹窗容器：统一所有对话框的 Windows11 毛玻璃视觉。
+///
+/// 用法：`showDialog(context: context, builder: (_) => GlassDialog(...))`，
+/// 取代默认的 `ContentDialog`，使对比结果、同步进度、热点组网、更新提示等
+/// 所有弹窗都使用同一套玻璃风格。
+class GlassDialog extends StatelessWidget {
+  final String title;
+  final Widget content;
+  final List<Widget> actions;
+  final double maxWidth;
+
+  const GlassDialog({
+    super.key,
+    required this.title,
+    required this.content,
+    this.actions = const [],
+    this.maxWidth = 380,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+        child: Container(
+          width: maxWidth,
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          decoration: BoxDecoration(
+            color: const Color(0xE61B2434),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0x26FFFFFF)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 40,
+                offset: Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 16),
+              content,
+              if (actions.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    for (var i = 0; i < actions.length; i++)
+                      Padding(
+                        padding: EdgeInsets.only(left: i == 0 ? 0 : 8),
+                        child: actions[i],
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
