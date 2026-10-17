@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
+import 'package:flutter/widgets.dart' show ValueListenableBuilder;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -583,11 +585,25 @@ class _SyncDialog extends StatefulWidget {
   State<_SyncDialog> createState() => _SyncDialogState();
 }
 
+/// 同步进度快照，用 [ValueNotifier] 承载，进度更新只重绘进度行，
+/// 避免每次进度都重建整个玻璃弹窗（含 BackdropFilter 模糊），
+/// 从根上消除「进度弹窗高频重绘模糊导致同步卡住」的问题。
+class _SyncProgress {
+  final int done;
+  final int total;
+  final int sentBytes;
+  final String currentName;
+
+  const _SyncProgress({
+    this.done = 0,
+    this.total = 0,
+    this.sentBytes = 0,
+    this.currentName = '',
+  });
+}
+
 class _SyncDialogState extends State<_SyncDialog> {
-  int _done = 0;
-  int _total = 0;
-  int _sentBytes = 0;
-  String _currentName = '';
+  final ValueNotifier<_SyncProgress> _progress = ValueNotifier(const _SyncProgress());
   bool _running = true;
   String? _error;
   int _failed = 0;
@@ -600,16 +616,23 @@ class _SyncDialogState extends State<_SyncDialog> {
     _start();
   }
 
+  @override
+  void dispose() {
+    _progress.dispose();
+    super.dispose();
+  }
+
   Future<void> _start() async {
     try {
       _failed = await widget.run((done, total, current) {
         if (!mounted) return;
-        setState(() {
-          _done = done;
-          _total = total;
-          _sentBytes += current.size;
-          _currentName = current.relativePath.split('/').last;
-        });
+        final p = _progress.value;
+        _progress.value = _SyncProgress(
+          done: done,
+          total: total,
+          sentBytes: p.sentBytes + current.size,
+          currentName: current.relativePath.split('/').last,
+        );
       });
       if (mounted) setState(() => _running = false);
     } catch (e) {
@@ -624,9 +647,6 @@ class _SyncDialogState extends State<_SyncDialog> {
   Widget build(BuildContext context) {
     final finished = !_running;
     final err = _error;
-    final progress = _total == 0 ? 0.0 : (_done / _total).clamp(0.0, 1.0);
-    final seconds = _watch.elapsedMilliseconds / 1000.0;
-    final speed = seconds <= 0 ? 0 : (_sentBytes / seconds);
 
     return GlassDialog(
       title: finished
@@ -634,41 +654,57 @@ class _SyncDialogState extends State<_SyncDialog> {
           : '同步中 · ${widget.mappingName}',
       maxWidth: 400,
       content: SizedBox(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (err != null) ...[
-              Text('同步失败，请重试。\n$err',
-                  style: const TextStyle(fontSize: 13, color: Color(0xFFE9AA7E))),
-            ] else ...[
-              ProgressBar(value: progress),
-              const SizedBox(height: 10),
-              Text('${(progress * 100).toStringAsFixed(0)}%   $_done / $_total 个文件',
-                  style: const TextStyle(fontSize: 13, color: Color(0xFFe0e0e0))),
-              if (_currentName.isNotEmpty && !finished) ...[
-                const SizedBox(height: 4),
-                Text('当前：$_currentName',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
-              ],
-              const SizedBox(height: 4),
-              Text('已传输 ${_fmtBytes(_sentBytes)} / ${_fmtBytes(widget.totalBytes)}',
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
-              if (finished && _failed > 0) ...[
-                const SizedBox(height: 4),
-                Text('$_failed 个文件失败，请重新对比后重试',
-                    style: const TextStyle(fontSize: 12, color: Color(0xFFE9AA7E))),
-              ],
-              if (!finished && speed > 0) ...[
-                const SizedBox(height: 2),
-                Text('速度 ${_fmtBytes(speed.round())}/s',
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
-              ],
-            ],
-          ],
-        ),
+        width: 360,
+        child: err != null
+            ? Text('同步失败，请重试。\n$err',
+                style: const TextStyle(fontSize: 13, color: Color(0xFFE9AA7E)))
+            : ValueListenableBuilder<_SyncProgress>(
+                valueListenable: _progress,
+                builder: (context, p, _) {
+                  final progress = p.total == 0
+                      ? 0.0
+                      : (p.done / p.total).clamp(0.0, 1.0);
+                  final seconds = _watch.elapsedMilliseconds / 1000.0;
+                  final speed = seconds <= 0 ? 0 : (p.sentBytes / seconds);
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ProgressBar(value: progress),
+                      const SizedBox(height: 10),
+                      Text(
+                          '${(progress * 100).toStringAsFixed(0)}%   ${p.done} / ${p.total} 个文件',
+                          style: const TextStyle(
+                              fontSize: 13, color: Color(0xFFe0e0e0))),
+                      if (p.currentName.isNotEmpty && !finished) ...[
+                        const SizedBox(height: 4),
+                        Text('当前：${p.currentName}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF9a9a9a))),
+                      ],
+                      const SizedBox(height: 4),
+                      Text(
+                          '已传输 ${_fmtBytes(p.sentBytes)} / ${_fmtBytes(widget.totalBytes)}',
+                          style: const TextStyle(
+                              fontSize: 12, color: Color(0xFF9a9a9a))),
+                      if (finished && _failed > 0) ...[
+                        const SizedBox(height: 4),
+                        Text('$_failed 个文件失败，请重新对比后重试',
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFFE9AA7E))),
+                      ],
+                      if (!finished && speed > 0) ...[
+                        const SizedBox(height: 2),
+                        Text('速度 ${_fmtBytes(speed.round())}/s',
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF9a9a9a))),
+                      ],
+                    ],
+                  );
+                },
+              ),
       ),
       actions: [
         if (finished)

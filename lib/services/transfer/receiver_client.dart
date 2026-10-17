@@ -5,7 +5,7 @@ import '../../models/file_entry.dart';
 
 /// 接收端（Android）HTTP 客户端，向发送端 PC 拉取文件 / 发起配对。
 ///
-/// 每个请求都用独立的 [HttpClient] 并在结束后立即 `close(force: true)`，
+/// 每个请求都用独立的 [HttpClient] 并在结束后立即 `close()`，
 /// 不依赖 HTTP keep-alive 连接复用（见 [SenderClient] 说明）。
 class ReceiverClient {
   final String address;
@@ -42,7 +42,7 @@ class ReceiverClient {
     } catch (_) {
       return false;
     } finally {
-      http.close(force: true);
+      http.close();
     }
   }
 
@@ -58,7 +58,7 @@ class ReceiverClient {
           .map((e) => FileEntry.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
     } finally {
-      http.close(force: true);
+      http.close();
     }
   }
 
@@ -96,7 +96,7 @@ class ReceiverClient {
         } catch (_) {}
       }
     } finally {
-      http.close(force: true);
+      http.close();
     }
   }
 }

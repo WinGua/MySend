@@ -234,7 +234,7 @@ Future<T?> showGlassDialog<T>({
     barrierColor: const Color(0x8A000000),
     transitionDuration: const Duration(milliseconds: 220),
     pageBuilder: (dialogContext, animation, secondaryAnimation) =>
-        builder(dialogContext),
+        Center(child: builder(dialogContext)),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
       final curved =
           CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);

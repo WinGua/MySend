@@ -100,7 +100,7 @@ class ReceiverServer {
     await file.parent.create(recursive: true);
     final sink = file.openWrite();
     try {
-      await sink.addStream(req);
+      await sink.addStream(req).timeout(const Duration(minutes: 10));
     } finally {
       await sink.close();
     }
@@ -116,6 +116,8 @@ class ReceiverServer {
 
   void _writeJson(HttpRequest req, Map<String, dynamic> body, {int status = 200}) {
     req.response.statusCode = status;
+    // 明确关闭连接，避免 keep-alive 悬挂导致发送端在连续传输时假死。
+    req.response.headers.set(HttpHeaders.connectionHeader, 'close');
     req.response.headers.contentType =
         ContentType('application', 'json', charset: 'utf-8');
     req.response.write(jsonEncode(body));

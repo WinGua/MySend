@@ -5,10 +5,9 @@ import '../../models/file_entry.dart';
 
 /// 发送端（PC）HTTP 客户端，向接收端 Android 查询索引 / 推送文件 / 发起配对。
 ///
-/// 每个请求都用独立的 [HttpClient] 并在结束后立即 `close(force: true)`，
-/// 不依赖 HTTP keep-alive 连接复用。上一版复用连接时，接收端响应未正确维持
-/// keep-alive，导致「每传一个文件就卡一次」的假死；独立短连接在局域网内
-/// 开销极小，却能彻底避免连接复用状态不一致带来的卡顿。
+/// 每个请求都用独立的 [HttpClient] 并在结束后立即 `close()`，
+/// 配合接收端响应的 `Connection: close` 头，每次传输结束后干净地关闭连接，
+/// 避免 keep-alive 悬挂导致「连续传输多文件后卡住」。
 class SenderClient {
   final String address;
   final int port;
@@ -43,7 +42,7 @@ class SenderClient {
     } catch (_) {
       return false;
     } finally {
-      http.close(force: true);
+      http.close();
     }
   }
 
@@ -59,7 +58,7 @@ class SenderClient {
           .map((e) => FileEntry.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
     } finally {
-      http.close(force: true);
+      http.close();
     }
   }
 
@@ -91,7 +90,7 @@ class SenderClient {
       }
       await res.drain<void>();
     } finally {
-      http.close(force: true);
+      http.close();
     }
   }
 }
