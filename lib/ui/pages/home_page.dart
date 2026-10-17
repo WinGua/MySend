@@ -49,7 +49,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _refresh() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // 被动接受配对时（对端发起连接，本端自动接受并标记对方 connected），
+    // 本端 _peer 尚未设置；这里自动选定已连接的设备，使双方都能发起对比/同步。
+    if (_peer == null) {
+      for (final d in scope.discovery?.devices ?? const <PeerDevice>[]) {
+        if (d.connected) {
+          _peer = d;
+          break;
+        }
+      }
+    }
+    setState(() {});
   }
 
   void _toast(String msg, {InfoBarSeverity severity = InfoBarSeverity.info}) {
@@ -92,14 +103,22 @@ class _HomePageState extends State<HomePage> {
       final linked = d.copyWith(connected: true);
       scope.discovery?.addScanned(linked, connected: true);
       setState(() => _peer = linked);
-      _toast('已连接「${d.name}」');
+      await _showConnectResult(linked, ok: true);
     } else {
-      _toast('连接「${d.name}」被拒绝或失败', severity: InfoBarSeverity.error);
+      await _showConnectResult(d, ok: false);
     }
   }
 
+  /// 连接状态提示窗：居中蓝底玻璃、无按钮，短暂显示后自动消失（成功/失败两种）。
+  Future<void> _showConnectResult(PeerDevice d, {required bool ok}) async {
+    await showGlassDialog<Object?>(
+      context: context,
+      builder: (_) => _ConnectToast(d: d, ok: ok),
+    );
+  }
+
   /// 手机端扫码添加设备并立即发起连接。
-  /// 先判断两端是否同一局域网：可达则直接连接；不可达则走「热点组网」。
+  /// 先判断两端是否同一局域网：同网段则直接连接；异网则走「热点组网」教程。
   Future<void> _scanPair() async {
     final parsed = await Navigator.push<Map<String, dynamic>>(
       context,
@@ -114,9 +133,9 @@ class _HomePageState extends State<HomePage> {
     if (ip.isEmpty) return;
     final peer = PeerDevice.fromEnvelope(parsed, ip);
 
-    final reachable = await canReach(ip, peer.port);
+    final sameLan = await inSameLan(ip);
     if (!mounted) return;
-    if (reachable) {
+    if (sameLan) {
       scope.discovery?.addScanned(peer);
       setState(() => _peer = peer);
       await _connect(peer);
@@ -773,6 +792,69 @@ class _SyncDialogState extends State<_SyncDialog> {
             onPressed: () => Navigator.pop(context, err == null ? _failed : -1),
           ),
       ],
+    );
+  }
+}
+
+/// 连接状态自动提示：无按钮，约 2.2 秒后自动关闭。
+class _ConnectToast extends StatefulWidget {
+  final PeerDevice d;
+  final bool ok;
+
+  const _ConnectToast({required this.d, required this.ok});
+
+  @override
+  State<_ConnectToast> createState() => _ConnectToastState();
+}
+
+class _ConnectToastState extends State<_ConnectToast> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(milliseconds: 2200), () {
+      if (mounted) Navigator.pop(context);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = widget.ok;
+    final d = widget.d;
+    return GlassDialog(
+      title: ok ? '已连接' : '连接失败',
+      content: SizedBox(
+        width: 260,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              ok ? '已连接「${d.name}」' : '无法连接「${d.name}」',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: ok ? null : const Color(0xFFE9AA7E),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              ok
+                  ? '${d.address}:${d.port}'
+                  : '请检查设备是否在线、网络是否连通后重试。',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

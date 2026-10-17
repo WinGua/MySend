@@ -63,17 +63,13 @@ bool isSafeWithin(String root, String relativePath) {
   return normalizedChild == normalizedRoot || normalizedChild.startsWith(prefix);
 }
 
-/// 探测某个地址端口是否可达（用于判断两端是否在同一局域网）。
-Future<bool> canReach(String address, int port) async {
-  try {
-    final socket = await Socket.connect(
-      address,
-      port,
-      timeout: const Duration(seconds: 3),
-    );
-    socket.destroy();
-    return true;
-  } catch (_) {
-    return false;
-  }
+/// 判断目标 IP 是否与本机处于同一局域网（按 /24 网段比较，前三段一致即视为同网）。
+/// 相比探测端口，此方式不受系统防火墙拦截 TCP 入站的影响。
+Future<bool> inSameLan(String address) async {
+  final local = await localIpv4Address();
+  if (local == null || local.isEmpty) return false;
+  final a = local.split('.');
+  final b = address.split('.');
+  if (a.length != 4 || b.length != 4) return false;
+  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
 }
