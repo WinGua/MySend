@@ -15,6 +15,8 @@ class ReceiverServer {
   final int port;
   final List<SyncMapping> Function() mappingsProvider;
   final Future<bool> Function(PeerDevice requester) onPairRequest;
+  final Future<void> Function(String name, int count, int bytes, List<String> files)?
+      onSyncLog;
 
   HttpServer? _server;
 
@@ -22,6 +24,7 @@ class ReceiverServer {
     required this.port,
     required this.mappingsProvider,
     required this.onPairRequest,
+    this.onSyncLog,
   });
 
   bool get running => _server != null;
@@ -50,6 +53,9 @@ class ReceiverServer {
           break;
         case '/upload':
           await _handleUpload(req);
+          break;
+        case '/sync-log':
+          await _handleSyncLog(req);
           break;
         default:
           _writeJson(req, {'error': 'not found'}, status: 404);
@@ -105,6 +111,24 @@ class ReceiverServer {
       await sink.close();
     }
     _writeJson(req, {'ok': true});
+  }
+
+  Future<void> _handleSyncLog(HttpRequest req) async {
+    final body = await utf8.decoder.bind(req).join();
+    try {
+      final e = jsonDecode(body) as Map<String, dynamic>;
+      await onSyncLog?.call(
+        e['name'] as String? ?? '',
+        (e['count'] as num?)?.toInt() ?? 0,
+        (e['bytes'] as num?)?.toInt() ?? 0,
+        (e['files'] as List<dynamic>? ?? const [])
+            .map((x) => x.toString())
+            .toList(),
+      );
+      _writeJson(req, {'ok': true});
+    } catch (_) {
+      _writeJson(req, {'ok': false}, status: 400);
+    }
   }
 
   SyncMapping? _findMapping(String name) {

@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show ValueNotifier;
-import 'package:flutter/widgets.dart' show ValueListenableBuilder;
+import 'package:flutter/widgets.dart'
+    show ValueListenableBuilder, TweenAnimationBuilder;
+import 'package:flutter/animation.dart' show Curves, Tween;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -251,23 +253,39 @@ class _HomePageState extends State<HomePage> {
 
     Future<int> runIt(
         void Function(int done, int total, FileEntry current) onProgress) async {
+      final int failed;
       if (isSender) {
         final client = SenderClient(address: peer.address, port: peer.port);
-        return await SyncEngine.push(
+        failed = await SyncEngine.push(
           mapping: m,
           client: client,
           files: plan.toSend,
           onProgress: onProgress,
+        );
+        await _persistSyncLog(
+          failed: failed,
+          plan: plan,
+          mapping: m,
+          push: (name, count, bytes, files) => client.sendSyncLog(
+              name: name, fileCount: count, totalBytes: bytes, files: files),
         );
       } else {
         final client = ReceiverClient(address: peer.address, port: peer.port);
-        return await SyncEngine.run(
+        failed = await SyncEngine.run(
           mapping: m,
           client: client,
           files: plan.toSend,
           onProgress: onProgress,
         );
+        await _persistSyncLog(
+          failed: failed,
+          plan: plan,
+          mapping: m,
+          push: (name, count, bytes, files) => client.sendSyncLog(
+              name: name, fileCount: count, totalBytes: bytes, files: files),
+        );
       }
+      return failed;
     }
 
     if (isAndroid) {
@@ -291,15 +309,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (failed != null && failed >= 0) {
-      final successCount = plan.toSend.length - failed;
-      if (successCount > 0) {
-        await scope.syncLog.add(
-          name: m.name,
-          fileCount: successCount,
-          totalBytes: plan.totalBytes,
-          files: plan.toSend.map((e) => e.relativePath.split('/').last).toList(),
-        );
-      }
+      // 日志已在 runIt（最后一个文件传完时）通过 _persistSyncLog 记录并推送给对端。
       if (failed == 0 && mounted) {
         setState(() {
           _plans[m.id] = SyncPlan(
@@ -315,6 +325,33 @@ class _HomePageState extends State<HomePage> {
       }
     }
     if (mounted) setState(() => _syncing[m.id] = false);
+  }
+
+  /// 在最后一个文件传输完成后，立即本地记录本次同步日志并推送给对端，
+  /// 让双方各自留存该次同步任务记录（不依赖同步弹窗是否已点关闭）。
+  Future<void> _persistSyncLog({
+    required int failed,
+    required SyncPlan plan,
+    required SyncMapping mapping,
+    required Future<void> Function(
+            String name, int count, int bytes, List<String> files)
+        push,
+  }) async {
+    final successCount = plan.toSend.length - failed;
+    if (successCount <= 0) return;
+    final syncedNames =
+        plan.toSend.map((e) => e.relativePath.split('/').last).toList();
+    await scope.syncLog.add(
+      name: mapping.name,
+      fileCount: successCount,
+      totalBytes: plan.totalBytes,
+      files: syncedNames,
+    );
+    try {
+      await push(mapping.name, successCount, plan.totalBytes, syncedNames);
+    } catch (_) {
+      // 对端离线或推送失败时不影响本端日志记录。
+    }
   }
 
   // ---- UI ----
@@ -670,7 +707,18 @@ class _SyncDialogState extends State<_SyncDialog> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ProgressBar(value: progress),
+                      SizedBox(
+                        height: 12,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween<double>(end: progress),
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeOutCubic,
+                            builder: (_, v, __) => ProgressBar(value: v),
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 10),
                       Text(
                           '${(progress * 100).toStringAsFixed(0)}%   ${p.done} / ${p.total} 个文件',
@@ -778,6 +826,7 @@ class _HotspotPairDialogState extends State<_HotspotPairDialog> {
     return GlassDialog(
       title: '热点组网',
       content: SizedBox(
+        width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,

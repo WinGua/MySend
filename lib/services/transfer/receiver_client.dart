@@ -25,6 +25,31 @@ class ReceiverClient {
   /// 兼容旧调用点；内部连接已即时关闭，无需再释放。
   void close() {}
 
+  /// 推送一次同步日志到对端，让对端也留存该次同步记录。
+  Future<void> sendSyncLog({
+    required String name,
+    required int fileCount,
+    required int totalBytes,
+    required List<String> files,
+  }) async {
+    final http = _create();
+    try {
+      final req = await http.postUrl(_uri('/sync-log'));
+      req.headers.contentType =
+          ContentType('application', 'json', charset: 'utf-8');
+      req.write(jsonEncode({
+        'name': name,
+        'count': fileCount,
+        'bytes': totalBytes,
+        'files': files,
+      }));
+      final res = await req.close();
+      await res.drain<void>();
+    } finally {
+      http.close();
+    }
+  }
+
   Uri _uri(String path, [Map<String, String>? query]) =>
       Uri(scheme: 'http', host: address, port: port, path: path, queryParameters: query);
 

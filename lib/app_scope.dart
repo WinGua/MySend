@@ -10,14 +10,6 @@ import 'services/transfer/sender_server.dart';
 import 'storage/config_repository.dart';
 import 'storage/sync_log_repository.dart';
 
-/// 一次待确认的配对请求。
-class PairRequest {
-  final PeerDevice requester;
-  final Completer<bool> completer;
-
-  const PairRequest({required this.requester, required this.completer});
-}
-
 /// 全局服务容器：封装配置、发现、收发服务与同步日志，供各处单例访问。
 class AppScope extends ChangeNotifier {
   final ConfigRepository config = ConfigRepository();
@@ -26,8 +18,6 @@ class AppScope extends ChangeNotifier {
   DiscoveryService? discovery;
   SenderServer? server; // 发送端（PC）HTTP 服务
   ReceiverServer? receiverServer; // 接收端（Android）HTTP 服务
-
-  PairRequest? pairRequest; // 待确认的配对接入请求
 
   AppScope() {
     syncLog.load();
@@ -65,6 +55,7 @@ class AppScope extends ChangeNotifier {
         port: cfg.transferPort,
         mappingsProvider: () => config.config.mappings,
         onPairRequest: _onPairRequest,
+        onSyncLog: _onSyncLog,
       );
       await server!.start();
     } else {
@@ -72,6 +63,7 @@ class AppScope extends ChangeNotifier {
         port: cfg.transferPort,
         mappingsProvider: () => config.config.mappings,
         onPairRequest: _onPairRequest,
+        onSyncLog: _onSyncLog,
       );
       await receiverServer!.start();
     }
@@ -79,22 +71,21 @@ class AppScope extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 收到对端配对请求：抛出待确认状态，等待 UI 弹窗结果。
-  Future<bool> _onPairRequest(PeerDevice requester) {
-    final completer = Completer<bool>();
-    pairRequest = PairRequest(requester: requester, completer: completer);
+  /// 收到对端配对请求：自动接受并标记对端已连接（已移除人工确认步骤）。
+  Future<bool> _onPairRequest(PeerDevice requester) async {
+    discovery?.addScanned(requester, connected: true);
     notifyListeners();
-    return completer.future.timeout(const Duration(seconds: 60), onTimeout: () => false);
+    return true;
   }
 
-  /// UI 弹窗给出结果后回调：完成配对请求，接受则把对端标记为已连接。
-  void resolvePairRequest(bool accept) {
-    final r = pairRequest;
-    if (r == null) return;
-    pairRequest = null;
-    if (!r.completer.isCompleted) r.completer.complete(accept);
-    if (accept) discovery?.addScanned(r.requester, connected: true);
-    notifyListeners();
+  /// 接收对端推送的同步日志并记录，实现同步双方各自留存日志。
+  Future<void> _onSyncLog(String name, int count, int bytes, List<String> files) {
+    return syncLog.add(
+      name: name,
+      fileCount: count,
+      totalBytes: bytes,
+      files: files,
+    );
   }
 
   Future<void> stopServices() async {
