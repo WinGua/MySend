@@ -114,11 +114,14 @@ class SenderServer {
     req.response.statusCode = 200;
     req.response.headers.set('Content-Type', 'application/octet-stream');
     req.response.headers.set('Content-Length', '$length');
+    // 逐文件关闭连接，避免 keep-alive 悬挂导致接收端（Android）连续下载时卡住。
+    req.response.headers.set(HttpHeaders.connectionHeader, 'close');
     try {
       await req.response.addStream(file.openRead());
     } catch (_) {
       // 连接中断，忽略。
     }
+    await req.response.close();
   }
 
   Future<void> _handleSyncLog(HttpRequest req) async {
@@ -148,6 +151,7 @@ class SenderServer {
 
   void _writeJson(HttpRequest req, Map<String, dynamic> body, {int status = 200}) {
     req.response.statusCode = status;
+    req.response.headers.set(HttpHeaders.connectionHeader, 'close');
     req.response.headers.contentType =
         ContentType('application', 'json', charset: 'utf-8');
     req.response.write(jsonEncode(body));

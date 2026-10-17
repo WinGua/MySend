@@ -5,14 +5,16 @@ import '../../models/file_entry.dart';
 
 /// 发送端（PC）HTTP 客户端，向接收端 Android 查询索引 / 推送文件 / 发起配对。
 ///
-/// 每个请求都用独立的 [HttpClient] 并在结束后立即 `close()`，
-/// 配合接收端响应的 `Connection: close` 头，每次传输结束后干净地关闭连接，
-/// 避免 keep-alive 悬挂导致「连续传输多文件后卡住」。
+/// 文件上传复用单个常驻 [HttpClient]（避免每文件新建连接池的开销），
+/// 但每个请求设置 `persistentConnection = false`，配合接收端响应的 `Connection: close`
+/// 逐文件独立短连接，避免 keep-alive 悬挂导致「连续传输多文件后卡住」。
 class SenderClient {
   final String address;
   final int port;
 
   SenderClient({required this.address, required this.port});
+
+  HttpClient? _http;
 
   HttpClient _create() {
     final client = HttpClient();
@@ -22,8 +24,14 @@ class SenderClient {
     return client;
   }
 
-  /// 兼容旧调用点；内部连接已即时关闭，无需再释放。
-  void close() {}
+  /// 复用一个常驻 [HttpClient]（仅在需要时创建）。
+  HttpClient _ensure() => _http ??= _create();
+
+  /// 关闭常驻连接池；一次性请求（配对 / 索引 / 日志）仍各自使用独立短连接。
+  void close() {
+    _http?.close(force: true);
+    _http = null;
+  }
 
   /// 推送一次同步日志到对端，让对端也留存该次同步记录。
   Future<void> sendSyncLog({
@@ -94,28 +102,26 @@ class SenderClient {
     String sourceFilePath, {
     void Function(int sent, int total)? onProgress,
   }) async {
-    final http = _create();
-    try {
-      final file = File(sourceFilePath);
-      final length = await file.length();
-      final req = await http.postUrl(
-        _uri('/upload', {'mapping': mappingName, 'path': relativePath}),
-      );
-      req.headers.contentType = ContentType('application', 'octet-stream');
-      req.contentLength = length;
-      int sent = 0;
-      await for (final chunk in file.openRead()) {
-        req.add(chunk);
-        sent += chunk.length;
-        onProgress?.call(sent, length);
-      }
-      final res = await req.close();
-      if (res.statusCode != 200) {
-        throw HttpException('上传失败: ${res.statusCode} $relativePath');
-      }
-      await res.drain<void>();
-    } finally {
-      http.close();
+    final http = _ensure();
+    final file = File(sourceFilePath);
+    final length = await file.length();
+    final req = await http.postUrl(
+      _uri('/upload', {'mapping': mappingName, 'path': relativePath}),
+    );
+    req.headers.contentType = ContentType('application', 'octet-stream');
+    req.contentLength = length;
+    req.persistentConnection = false;
+    int sent = 0;
+    await for (final chunk in file.openRead()) {
+      req.add(chunk);
+      sent += chunk.length;
+      onProgress?.call(sent, length);
     }
+    final res = await req.close();
+    if (res.statusCode != 200) {
+      await res.drain<void>();
+      throw HttpException('上传失败: ${res.statusCode} $relativePath');
+    }
+    await res.drain<void>();
   }
 }

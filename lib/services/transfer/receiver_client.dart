@@ -5,13 +5,16 @@ import '../../models/file_entry.dart';
 
 /// 接收端（Android）HTTP 客户端，向发送端 PC 拉取文件 / 发起配对。
 ///
-/// 每个请求都用独立的 [HttpClient] 并在结束后立即 `close()`，
-/// 不依赖 HTTP keep-alive 连接复用（见 [SenderClient] 说明）。
+/// 文件下载复用单个常驻 [HttpClient]（避免安卓端每文件新建连接池的开销），
+/// 但每个请求设置 `persistentConnection = false`，配合服务端 `Connection: close`
+/// 逐文件独立短连接，避免 keep-alive 悬挂导致「连续下载多文件后卡住」。
 class ReceiverClient {
   final String address;
   final int port;
 
   ReceiverClient({required this.address, required this.port});
+
+  HttpClient? _http;
 
   HttpClient _create() {
     final client = HttpClient();
@@ -22,8 +25,15 @@ class ReceiverClient {
     return client;
   }
 
-  /// 兼容旧调用点；内部连接已即时关闭，无需再释放。
-  void close() {}
+  /// 复用一个常驻 [HttpClient]（仅在需要时创建），
+  /// 避免每个文件新建/销毁连接池在安卓端造成的描述符与线程开销。
+  HttpClient _ensure() => _http ??= _create();
+
+  /// 关闭常驻连接池；一次性请求（配对 / 索引 / 日志）仍各自使用独立短连接。
+  void close() {
+    _http?.close(force: true);
+    _http = null;
+  }
 
   /// 推送一次同步日志到对端，让对端也留存该次同步记录。
   Future<void> sendSyncLog({
@@ -95,33 +105,36 @@ class ReceiverClient {
     int? mtimeMs,
     void Function(int received, int total)? onProgress,
   }) async {
-    final http = _create();
+    final http = _ensure();
+    final req = await http.getUrl(
+      _uri('/file', {'mapping': mappingName, 'path': relativePath}),
+    );
+    req.persistentConnection = false;
+    final res = await req.close();
+    if (res.statusCode != 200) {
+      await res.drain<void>();
+      throw HttpException('下载失败: ${res.statusCode} $relativePath');
+    }
+    final total = res.contentLength;
+    final file = File(destFilePath);
+    await file.parent.create(recursive: true);
+    final sink = file.openWrite();
+    int received = 0;
     try {
-      final req = await http.getUrl(
-        _uri('/file', {'mapping': mappingName, 'path': relativePath}),
-      );
-      final res = await req.close();
-      if (res.statusCode != 200) {
-        throw HttpException('下载失败: ${res.statusCode} $relativePath');
-      }
-      final total = res.contentLength;
-      final file = File(destFilePath);
-      await file.parent.create(recursive: true);
-      final sink = file.openWrite();
-      int received = 0;
       await for (final chunk in res) {
         sink.add(chunk);
         received += chunk.length;
         onProgress?.call(received, total);
       }
       await sink.close();
-      if (mtimeMs != null) {
-        try {
-          await file.setLastModified(DateTime.fromMillisecondsSinceEpoch(mtimeMs));
-        } catch (_) {}
-      }
-    } finally {
-      http.close();
+    } catch (_) {
+      await sink.close();
+      rethrow;
+    }
+    if (mtimeMs != null) {
+      try {
+        await file.setLastModified(DateTime.fromMillisecondsSinceEpoch(mtimeMs));
+      } catch (_) {}
     }
   }
 }

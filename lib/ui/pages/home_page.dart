@@ -121,26 +121,16 @@ class _HomePageState extends State<HomePage> {
       setState(() => _peer = peer);
       await _connect(peer);
     } else {
-      await _hotspotPair(peer);
+      await _hotspotPair();
     }
   }
 
-  /// 热点组网：引导用户在系统设置开启便携式热点，电脑连接后复用自动发现完成配对。
-  Future<void> _hotspotPair(PeerDevice pc) async {
-    final found = await showGlassDialog<PeerDevice>(
+  /// 热点组网：仅展示一份手动组网教程，不做自动判定，用户自行操作后回到本页连接。
+  Future<void> _hotspotPair() async {
+    await showGlassDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => _HotspotPairDialog(pc: pc),
+      builder: (_) => const _HotspotTutorialDialog(),
     );
-    if (!mounted) return;
-    if (found != null) {
-      scope.discovery?.addScanned(found);
-      setState(() => _peer = found);
-      await _connect(found);
-    } else {
-      _toast('热点组网未完成，请确认电脑已连接手机热点后重试。',
-          severity: InfoBarSeverity.warning);
-    }
   }
 
   /// 电脑端展示连接二维码。
@@ -708,15 +698,37 @@ class _SyncDialogState extends State<_SyncDialog> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       SizedBox(
-                        height: 12,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: TweenAnimationBuilder<double>(
-                            tween: Tween<double>(end: progress),
-                            duration: const Duration(milliseconds: 250),
-                            curve: Curves.easeOutCubic,
-                            builder: (_, v, __) => ProgressBar(value: v),
-                          ),
+                        width: double.infinity,
+                        height: 18,
+                        child: LayoutBuilder(
+                          builder: (context, c) {
+                            return ClipRRect(
+                              borderRadius: BorderRadius.circular(9),
+                              child: Container(
+                                width: c.maxWidth,
+                                height: 18,
+                                color: const Color(0x1AFFFFFF),
+                                alignment: Alignment.centerLeft,
+                                child: TweenAnimationBuilder<double>(
+                                  tween: Tween<double>(end: progress),
+                                  duration: const Duration(milliseconds: 400),
+                                  curve: Curves.easeOutCubic,
+                                  builder: (_, v, __) => Container(
+                                    width: c.maxWidth * v.clamp(0.0, 1.0),
+                                    height: 18,
+                                    decoration: const BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          Color(0xFF4A9EFF),
+                                          Color(0xFF7C5CFF),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -765,88 +777,39 @@ class _SyncDialogState extends State<_SyncDialog> {
   }
 }
 
-/// 热点组网弹窗：引导用户在系统设置开启便携式热点，轮询电脑是否接入并自动完成配对。
-class _HotspotPairDialog extends StatefulWidget {
-  final PeerDevice pc;
-
-  const _HotspotPairDialog({required this.pc});
-
-  @override
-  State<_HotspotPairDialog> createState() => _HotspotPairDialogState();
-}
-
-class _HotspotPairDialogState extends State<_HotspotPairDialog> {
-  String _status = '请在手机系统设置中开启「便携式热点」…';
-  Timer? _timer;
-  int _elapsed = 0;
-  bool _polling = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
-  }
-
-  Future<void> _poll() async {
-    if (_polling) return;
-    _polling = true;
-    try {
-      _elapsed += 2;
-      final devices = scope.discovery?.devices ?? const <PeerDevice>[];
-      for (final d in devices) {
-        if (d.id != widget.pc.id) continue;
-        final reachable = await canReach(d.address, d.port);
-        if (reachable) {
-          _timer?.cancel();
-          if (mounted) Navigator.pop(context, d);
-          return;
-        }
-      }
-      if (_elapsed >= 120 && mounted) {
-        setState(() => _status = '等待超时，请确认电脑已连接手机热点后重试。');
-      }
-    } finally {
-      _polling = false;
-    }
-  }
-
-  void _cancel() {
-    _timer?.cancel();
-    Navigator.pop(context);
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
+/// 热点组网教程弹窗：仅给出一份手动组网步骤提示，不做任何连接判定。
+class _HotspotTutorialDialog extends StatelessWidget {
+  const _HotspotTutorialDialog();
 
   @override
   Widget build(BuildContext context) {
     return GlassDialog(
-      title: '热点组网',
+      title: '热点组网教程',
       content: SizedBox(
-        width: 360,
+        width: 320,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('当前手机与电脑不在同一网络，请手动组网：',
+          children: const [
+            Text('当前手机与电脑不在同一网络，请手动组网：',
                 style: TextStyle(fontSize: 13, color: Color(0xFFc0c0c0))),
-            const SizedBox(height: 12),
-            const Text('1. 进入手机「设置 → 便携式热点」，开启热点；',
+            SizedBox(height: 12),
+            Text('1. 进入手机「设置 → 便携式热点」，开启热点；',
                 style: TextStyle(fontSize: 13)),
-            const SizedBox(height: 4),
-            const Text('2. 在电脑右下角 Wi-Fi 列表连接该热点（密码见手机热点页）。',
+            SizedBox(height: 4),
+            Text('2. 在电脑右下角 Wi-Fi 列表连接该热点（密码见手机热点页）；',
                 style: TextStyle(fontSize: 13)),
-            const SizedBox(height: 12),
-            Text(_status,
-                style: const TextStyle(fontSize: 13, color: Color(0xFF4A9EFF))),
+            SizedBox(height: 4),
+            Text('3. 回到本页，电脑会自动被发现，再点「连接」继续。',
+                style: TextStyle(fontSize: 13)),
           ],
         ),
       ),
       actions: [
-        Button(child: const Text('取消'), onPressed: _cancel),
+        FilledButton(
+          child: const Text('知道了'),
+          onPressed: () => Navigator.pop(context),
+        ),
       ],
     );
   }
