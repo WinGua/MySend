@@ -50,9 +50,9 @@ class _SyncLogPageState extends State<SyncLogPage> {
             children: [
               Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text('共 ${logs.length} 条记录',
-                        style: TextStyle(fontSize: 13, color: Color(0xFF9a9a9a))),
+                        style: const TextStyle(fontSize: 13, color: Color(0xFF9a9a9a))),
                   ),
                   if (logs.isNotEmpty)
                     Button(
