@@ -166,7 +166,9 @@ class GlassDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
-    final w = math.min(maxWidth, screenW * 0.9);
+    // 桌面/平板用 maxWidth 作为上限；窄屏（手机）按屏幕宽减去两侧边距，
+    // 让弹窗居中呈现为「适合大小」的小窗口，而不是几乎占满整个屏幕。
+    final w = math.min(maxWidth, math.max(280.0, screenW - 64.0));
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: BackdropFilter(

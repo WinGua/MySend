@@ -69,26 +69,23 @@ class _SettingsPageState extends State<SettingsPage> {
     final notif = await ensureNotificationPermission();
     final battery = await requestBatteryOptimizationExemption();
     if (!mounted) return;
-    final InfoBarSeverity sev;
-    final String msg;
-    if (notif) {
-      sev = InfoBarSeverity.success;
-      msg = battery
-          ? '后台保活已开启'
-          : '后台保活已开启；可再到系统电池/自启动设置中允许本应用后台运行，以获得更稳定保活。';
-    } else {
-      sev = InfoBarSeverity.warning;
-      msg = '通知权限未授权，切后台可能被系统关闭，请到系统设置开启通知。';
-    }
-    displayInfoBar(
-      context,
-      builder: (context, close) => InfoBar(
-        severity: sev,
-        title: Text(msg),
-        action: IconButton(
-          icon: const Icon(FluentIcons.chrome_close),
-          onPressed: close,
-        ),
+    final bool ok = notif;
+    final String msg = notif
+        ? (battery
+            ? '后台保活已开启'
+            : '后台保活已开启；可再到系统电池/自启动设置中允许本应用后台运行，以获得更稳定保活。')
+        : '通知权限未授权，切后台可能被系统关闭，请到系统设置开启通知。';
+    await showDialog(
+      context: context,
+      builder: (ctx) => GlassDialog(
+        title: ok ? '后台保活' : '权限提示',
+        content: Text(msg),
+        actions: [
+          FilledButton(
+            child: const Text('知道了'),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+        ],
       ),
     );
   }
