@@ -123,7 +123,7 @@ class _HomePageState extends State<HomePage> {
 
   /// 热点组网：引导用户在系统设置开启便携式热点，电脑连接后复用自动发现完成配对。
   Future<void> _hotspotPair(PeerDevice pc) async {
-    final found = await showDialog<PeerDevice>(
+    final found = await showGlassDialog<PeerDevice>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _HotspotPairDialog(pc: pc),
@@ -141,7 +141,7 @@ class _HomePageState extends State<HomePage> {
 
   /// 电脑端展示连接二维码。
   Future<void> _showPairQr() async {
-    await showDialog(
+    await showGlassDialog(
       context: context,
       builder: (_) => const QrPairDialog(),
     );
@@ -194,7 +194,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _showCompareResult(SyncMapping m, SyncPlan plan) async {
     final names = plan.newOnly.map((e) => e.relativePath.split('/').last).toList();
-    await showDialog(
+    await showGlassDialog(
       context: context,
       builder: (ctx) => GlassDialog(
         title: '对比完成 · ${m.name}',
@@ -273,7 +273,7 @@ class _HomePageState extends State<HomePage> {
         await WakelockPlus.enable();
       } catch (_) {}
     }
-    final failed = await showDialog<int>(
+    final failed = await showGlassDialog<int>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _SyncDialog(

@@ -32,7 +32,7 @@ class _MappingsPageState extends State<MappingsPage> {
   }
 
   Future<void> _openForm({SyncMapping? existing}) async {
-    final result = await showDialog<SyncMapping>(
+    final result = await showGlassDialog<SyncMapping>(
       context: context,
       builder: (ctx) => _MappingFormDialog(existing: existing),
     );
@@ -45,7 +45,7 @@ class _MappingsPageState extends State<MappingsPage> {
   }
 
   Future<void> _delete(SyncMapping m) async {
-    final ok = await showDialog<bool>(
+    final ok = await showGlassDialog<bool>(
       context: context,
       builder: (ctx) => GlassDialog(
         title: '删除映射',

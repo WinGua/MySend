@@ -60,7 +60,7 @@ class _ShellState extends State<Shell> {
       scope.resolvePairRequest(false);
       return;
     }
-    final accept = await showDialog<bool>(
+    final accept = await showGlassDialog<bool>(
       context: ctx,
       barrierDismissible: false,
       builder: (dialogCtx) => GlassDialog(

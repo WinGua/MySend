@@ -75,7 +75,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ? '后台保活已开启'
             : '后台保活已开启；可再到系统电池/自启动设置中允许本应用后台运行，以获得更稳定保活。')
         : '通知权限未授权，切后台可能被系统关闭，请到系统设置开启通知。';
-    await showDialog(
+    await showGlassDialog(
       context: context,
       builder: (ctx) => GlassDialog(
         title: ok ? '后台保活' : '权限提示',
@@ -128,7 +128,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final cmp = _compareVersions(latest, AppConstants.currentVersion);
       if (!mounted) return;
       if (cmp > 0) {
-        final go = await showDialog<bool>(
+        final go = await showGlassDialog<bool>(
           context: context,
           builder: (ctx) => GlassDialog(
             title: '发现新版本',
@@ -148,7 +148,7 @@ class _SettingsPageState extends State<SettingsPage> {
         );
         if (go == true) await _openUrl(AppConstants.releasesUrl);
       } else {
-        await showDialog(
+        await showGlassDialog(
           context: context,
           builder: (ctx) => GlassDialog(
             title: '已是最新版本',
@@ -164,7 +164,7 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     } catch (_) {
       if (!mounted) return;
-      await showDialog(
+      await showGlassDialog(
         context: context,
         builder: (ctx) => GlassDialog(
           title: '检查失败',

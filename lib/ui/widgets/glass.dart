@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
+import 'package:flutter/material.dart' as material;
 import 'package:flutter/widgets.dart';
 
 /// 跨平台统一的磨砂玻璃视觉组件集合。
@@ -146,7 +147,7 @@ class _PressableScaleState extends State<PressableScale> {
 
 /// 磨砂玻璃弹窗容器：统一所有对话框的 Windows11 毛玻璃视觉。
 ///
-/// 用法：`showDialog(context: context, builder: (_) => GlassDialog(...))`，
+/// 用法：`showGlassDialog(context: context, builder: (_) => GlassDialog(...))`，
 /// 取代默认的 `ContentDialog`，使对比结果、同步进度、热点组网、更新提示等
 /// 所有弹窗都使用同一套玻璃风格。
 class GlassDialog extends StatelessWidget {
@@ -166,15 +167,16 @@ class GlassDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.of(context).size.width;
-    // 桌面/平板用 maxWidth 作为上限；窄屏（手机）按屏幕宽减去两侧边距，
-    // 让弹窗居中呈现为「适合大小」的小窗口，而不是几乎占满整个屏幕。
-    final w = math.min(maxWidth, math.max(280.0, screenW - 64.0));
+    // 宽度由内容驱动（Container shrink-wrap），仅用上限约束防止溢出；
+    // 短文字弹窗自然收窄贴合文字，信息量大的弹窗（进度条/文件列表）自然撑开，
+    // 不再为不同弹窗硬编码固定档位。
+    final cap = math.min(maxWidth, math.max(240.0, screenW - 48.0));
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
         child: Container(
-          width: w,
+          constraints: BoxConstraints(minWidth: 240, maxWidth: cap),
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
           decoration: BoxDecoration(
             color: const Color(0xE61B2434),
@@ -216,4 +218,35 @@ class GlassDialog extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 统一的玻璃弹窗入口：内置入场（缩放+淡入）与出场（缩放+淡出）动画，
+/// 用 [material.showGeneralDialog] 借助正反向过渡实现，取代无出场动画的 `showDialog`。
+Future<T?> showGlassDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+}) {
+  return material.showGeneralDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    barrierLabel: '',
+    barrierColor: const Color(0x8A000000),
+    transitionDuration: const Duration(milliseconds: 220),
+    reverseTransitionDuration: const Duration(milliseconds: 180),
+    pageBuilder: (dialogContext, animation, secondaryAnimation) =>
+        builder(dialogContext),
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      final curved =
+          CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      return Opacity(
+        opacity: curved.value,
+        child: Transform.scale(
+          scale: 0.92 + 0.08 * curved.value,
+          alignment: Alignment.center,
+          child: child,
+        ),
+      );
+    },
+  );
 }
