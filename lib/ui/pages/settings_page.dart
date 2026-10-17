@@ -95,13 +95,21 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _openAbout() {
     Navigator.of(context).push(
-      material.MaterialPageRoute(builder: (_) => const AboutPage()),
+      material.PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const AboutPage(),
+        transitionsBuilder: (_, anim, __, child) =>
+            material.FadeTransition(opacity: anim, child: child),
+      ),
     );
   }
 
   void _openLog() {
     Navigator.of(context).push(
-      material.MaterialPageRoute(builder: (_) => const SyncLogPage()),
+      material.PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const SyncLogPage(),
+        transitionsBuilder: (_, anim, __, child) =>
+            material.FadeTransition(opacity: anim, child: child),
+      ),
     );
   }
 

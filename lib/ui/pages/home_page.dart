@@ -70,11 +70,15 @@ class _HomePageState extends State<HomePage> {
     setState(() => _connecting[d.id] = true);
     bool ok = false;
     try {
-      ok = isSender
-          ? await SenderClient(address: d.address, port: d.port)
-              .sendPairRequest(scope.selfDescribe())
-          : await ReceiverClient(address: d.address, port: d.port)
-              .sendPairRequest(scope.selfDescribe());
+      if (isSender) {
+        final c = SenderClient(address: d.address, port: d.port);
+        ok = await c.sendPairRequest(scope.selfDescribe());
+        c.close();
+      } else {
+        final c = ReceiverClient(address: d.address, port: d.port);
+        ok = await c.sendPairRequest(scope.selfDescribe());
+        c.close();
+      }
     } catch (_) {
       ok = false;
     }
@@ -166,18 +170,26 @@ class _HomePageState extends State<HomePage> {
 
   Future<SyncPlan> _compareAsSender(SyncMapping m, PeerDevice peer) async {
     final client = SenderClient(address: peer.address, port: peer.port);
-    final dest = await client.getDestIndex(m.name);
-    final destMap = {for (final e in dest) e.relativePath: e};
-    final srcMap = await LocalIndexService.scan(m.sourcePath);
-    return SyncEngine.computePlan(mapping: m, source: srcMap, dest: destMap);
+    try {
+      final dest = await client.getDestIndex(m.name);
+      final destMap = {for (final e in dest) e.relativePath: e};
+      final srcMap = await LocalIndexService.scan(m.sourcePath);
+      return SyncEngine.computePlan(mapping: m, source: srcMap, dest: destMap);
+    } finally {
+      client.close();
+    }
   }
 
   Future<SyncPlan> _compareAsReceiver(SyncMapping m, PeerDevice peer) async {
     final client = ReceiverClient(address: peer.address, port: peer.port);
-    final src = await client.getIndex(m.name);
-    final srcMap = {for (final e in src) e.relativePath: e};
-    final destMap = await LocalIndexService.scan(m.destPath);
-    return SyncEngine.computePlan(mapping: m, source: srcMap, dest: destMap);
+    try {
+      final src = await client.getIndex(m.name);
+      final srcMap = {for (final e in src) e.relativePath: e};
+      final destMap = await LocalIndexService.scan(m.destPath);
+      return SyncEngine.computePlan(mapping: m, source: srcMap, dest: destMap);
+    } finally {
+      client.close();
+    }
   }
 
   Future<void> _showCompareResult(SyncMapping m, SyncPlan plan) async {
@@ -187,7 +199,6 @@ class _HomePageState extends State<HomePage> {
       builder: (ctx) => GlassDialog(
         title: '对比完成 · ${m.name}',
         content: SizedBox(
-          width: 360,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -235,11 +246,11 @@ class _HomePageState extends State<HomePage> {
     }
     setState(() => _syncing[m.id] = true);
 
-    Future<void> runIt(
+    Future<int> runIt(
         void Function(int done, int total, FileEntry current) onProgress) async {
       if (isSender) {
         final client = SenderClient(address: peer.address, port: peer.port);
-        await SyncEngine.push(
+        return await SyncEngine.push(
           mapping: m,
           client: client,
           files: plan.toSend,
@@ -247,7 +258,7 @@ class _HomePageState extends State<HomePage> {
         );
       } else {
         final client = ReceiverClient(address: peer.address, port: peer.port);
-        await SyncEngine.run(
+        return await SyncEngine.run(
           mapping: m,
           client: client,
           files: plan.toSend,
@@ -261,7 +272,7 @@ class _HomePageState extends State<HomePage> {
         await WakelockPlus.enable();
       } catch (_) {}
     }
-    final success = await showDialog<bool>(
+    final failed = await showDialog<int>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _SyncDialog(
@@ -276,14 +287,17 @@ class _HomePageState extends State<HomePage> {
       } catch (_) {}
     }
 
-    if (success == true) {
-      await scope.syncLog.add(
-        name: m.name,
-        fileCount: plan.toSend.length,
-        totalBytes: plan.totalBytes,
-        files: plan.toSend.map((e) => e.relativePath.split('/').last).toList(),
-      );
-      if (mounted) {
+    if (failed != null && failed >= 0) {
+      final successCount = plan.toSend.length - failed;
+      if (successCount > 0) {
+        await scope.syncLog.add(
+          name: m.name,
+          fileCount: successCount,
+          totalBytes: plan.totalBytes,
+          files: plan.toSend.map((e) => e.relativePath.split('/').last).toList(),
+        );
+      }
+      if (failed == 0 && mounted) {
         setState(() {
           _plans[m.id] = SyncPlan(
             mappingId: m.id,
@@ -292,6 +306,9 @@ class _HomePageState extends State<HomePage> {
             newOnly: const [],
           );
         });
+      } else if (failed > 0) {
+        _toast('$failed 个文件同步失败，请重新对比后重试',
+            severity: InfoBarSeverity.warning);
       }
     }
     if (mounted) setState(() => _syncing[m.id] = false);
@@ -552,7 +569,7 @@ class _LanHint extends StatelessWidget {
 class _SyncDialog extends StatefulWidget {
   final String mappingName;
   final int totalBytes;
-  final Future<void> Function(
+  final Future<int> Function(
       void Function(int done, int total, FileEntry current)) run;
 
   const _SyncDialog({
@@ -572,6 +589,7 @@ class _SyncDialogState extends State<_SyncDialog> {
   String _currentName = '';
   bool _running = true;
   String? _error;
+  int _failed = 0;
   final Stopwatch _watch = Stopwatch();
 
   @override
@@ -583,7 +601,7 @@ class _SyncDialogState extends State<_SyncDialog> {
 
   Future<void> _start() async {
     try {
-      await widget.run((done, total, current) {
+      _failed = await widget.run((done, total, current) {
         if (!mounted) return;
         setState(() {
           _done = done;
@@ -614,7 +632,6 @@ class _SyncDialogState extends State<_SyncDialog> {
           ? (err != null ? '同步失败' : '同步完成')
           : '同步中 · ${widget.mappingName}',
       content: SizedBox(
-        width: 380,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -637,6 +654,11 @@ class _SyncDialogState extends State<_SyncDialog> {
               const SizedBox(height: 4),
               Text('已传输 ${_fmtBytes(_sentBytes)} / ${_fmtBytes(widget.totalBytes)}',
                   style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
+              if (finished && _failed > 0) ...[
+                const SizedBox(height: 4),
+                Text('$_failed 个文件失败，请重新对比后重试',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFFE9AA7E))),
+              ],
               if (!finished && speed > 0) ...[
                 const SizedBox(height: 2),
                 Text('速度 ${_fmtBytes(speed.round())}/s',
@@ -650,7 +672,7 @@ class _SyncDialogState extends State<_SyncDialog> {
         if (finished)
           FilledButton(
             child: const Text('关闭'),
-            onPressed: () => Navigator.pop(context, err == null),
+            onPressed: () => Navigator.pop(context, err == null ? _failed : -1),
           ),
       ],
     );
@@ -718,7 +740,6 @@ class _HotspotPairDialogState extends State<_HotspotPairDialog> {
     return GlassDialog(
       title: '热点组网',
       content: SizedBox(
-        width: 340,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
