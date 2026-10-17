@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.net.wifi.SoftApConfiguration
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -109,20 +108,32 @@ class MainActivity : FlutterActivity() {
 
     private fun beginLocalOnlyHotspot() {
         val manager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        val config = try {
-            SoftApConfiguration.Builder()
-                .setSsid(pendingSsid)
-                .setPassphrase(pendingPassphrase, SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)
-                .build()
-        } catch (e: Throwable) {
-            pendingHotspot?.error("config_error", "${e.message}", null)
-            pendingHotspot = null
-            return
-        }
         val executor = Executors.newSingleThreadExecutor()
         hotspotExecutor = executor
+
+        // 说明：SoftApConfiguration.Builder 及
+        // startLocalOnlyHotspot(SoftApConfiguration, Executor, LocalOnlyHotspotCallback)
+        // 是 Android 13 (API 33) 才新增的接口。云端构建环境下编译器会被解析到过旧的
+        // android.jar，导致这些 API 33 符号在编译期不可见（报 Unresolved reference: Builder）。
+        // 因此改用反射动态调用，规避编译期 SDK 符号解析问题（运行环境为 Android 13+，符号必然存在）。
         try {
-            manager.startLocalOnlyHotspot(
+            val softApConfigClass = Class.forName("android.net.wifi.SoftApConfiguration")
+            val builderClass = Class.forName("android.net.wifi.SoftApConfiguration\$Builder")
+            val builder = builderClass.getConstructor().newInstance()
+            builderClass.getMethod("setSsid", String::class.java).invoke(builder, pendingSsid)
+            val securityType = softApConfigClass.getField("SECURITY_TYPE_WPA2_PSK").getInt(null)
+            builderClass.getMethod("setPassphrase", String::class.java, Int::class.javaPrimitiveType)
+                .invoke(builder, pendingPassphrase, securityType)
+            val config = builderClass.getMethod("build").invoke(builder)
+
+            val startMethod = WifiManager::class.java.getMethod(
+                "startLocalOnlyHotspot",
+                softApConfigClass,
+                java.util.concurrent.Executor::class.java,
+                WifiManager.LocalOnlyHotspotCallback::class.java
+            )
+            startMethod.invoke(
+                manager,
                 config,
                 executor,
                 object : WifiManager.LocalOnlyHotspotCallback() {
