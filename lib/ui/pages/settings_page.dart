@@ -7,8 +7,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app_scope.dart';
 import '../../core/constants.dart';
-import '../../core/utils.dart';
-import '../../platform/permissions.dart';
 import '../widgets/glass.dart';
 import 'about_page.dart';
 import 'sync_log_page.dart';
@@ -55,39 +53,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     await scope.startServices(); // 应用新的名称 / 端口 / 配置
     if (mounted) setState(() {});
-  }
-
-  Future<void> _requestPermission() async {
-    final ok = await ensureFileAccess();
-    if (!ok) await openManageStorageSettings();
-  }
-
-  Future<void> _requestBackground() async {
-    // 通知权限是前台服务常驻通知的关键；电池优化白名单仅作为更强保活的建议。
-    // 部分国产系统（OriginOS 等）对「忽略电池优化」的授权结果返回不可靠，
-    // 因此以通知权限结果作为「后台保活是否就绪」的主要依据，避免误报「未成功」。
-    final notif = await ensureNotificationPermission();
-    final battery = await requestBatteryOptimizationExemption();
-    if (!mounted) return;
-    final bool ok = notif;
-    final String msg = notif
-        ? (battery
-            ? '后台保活已开启'
-            : '后台保活已开启；可再到系统电池/自启动设置中允许本应用后台运行，以获得更稳定保活。')
-        : '通知权限未授权，切后台可能被系统关闭，请到系统设置开启通知。';
-    await showGlassDialog(
-      context: context,
-      builder: (ctx) => GlassDialog(
-        title: ok ? '后台保活' : '权限提示',
-        content: Text(msg),
-        actions: [
-          FilledButton(
-            child: const Text('知道了'),
-            onPressed: () => Navigator.pop(ctx),
-          ),
-        ],
-      ),
-    );
   }
 
   void _openAbout() {
@@ -235,24 +200,6 @@ class _SettingsPageState extends State<SettingsPage> {
             TextBox(controller: _port, placeholder: '53318'),
             const SizedBox(height: 24),
             FilledButton(child: const Text('保存并重启服务'), onPressed: _save),
-            if (isAndroid) ...[
-              const SizedBox(height: 12),
-              Button(
-                child: const Text('申请文件访问权限'),
-                onPressed: _requestPermission,
-              ),
-              const SizedBox(height: 8),
-              Button(
-                child: const Text('允许后台运行（推荐）'),
-                onPressed: _requestBackground,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                '手机端需要「所有文件访问」权限才能写入真实目录；'
-                '「允许后台运行」可避免切后台 / 黑屏后掉线。',
-                style: TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
-              ),
-            ],
             const SizedBox(height: 32),
             const Text('同步日志',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),

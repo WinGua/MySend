@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/utils.dart';
@@ -49,4 +47,22 @@ Future<void> openManageStorageSettings() async {
   try {
     await openAppSettings();
   } catch (_) {}
+}
+
+/// 首次启动集中申请全部运行时权限（个人侧载场景）。
+/// 顺序：先应用内弹窗（相机、通知），再跳系统设置（文件访问、电池优化）。
+/// 已授权项重复 request 会直接返回 granted，不会重复打扰；
+/// 后续各操作（扫码 / 同步）中若发现权限缺失，会按需再次引导申请。
+Future<void> requestAllInitialPermissions() async {
+  if (!isAndroid) return;
+  // 相机（扫码添加设备）
+  try {
+    await Permission.camera.request();
+  } catch (_) {}
+  // 通知（后台保活前台服务常驻）
+  await ensureNotificationPermission();
+  // 所有文件访问（写入真实目录）
+  await ensureFileAccess();
+  // 忽略电池优化（后台保活白名单）
+  await requestBatteryOptimizationExemption();
 }

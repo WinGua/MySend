@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ValueNotifier;
+import 'package:flutter/foundation.dart' show ValueNotifier, debugPrint;
 import 'package:flutter/widgets.dart'
     show ValueListenableBuilder, TweenAnimationBuilder;
 import 'package:flutter/animation.dart' show Curves, Tween;
@@ -13,6 +13,7 @@ import '../../models/device_info.dart';
 import '../../models/file_entry.dart';
 import '../../models/sync_mapping.dart';
 import '../../models/sync_plan.dart';
+import '../../platform/permissions.dart';
 import '../../services/local_index_service.dart';
 import '../../services/sync_engine.dart';
 import '../../services/transfer/receiver_client.dart';
@@ -56,6 +57,7 @@ class _HomePageState extends State<HomePage> {
       for (final d in scope.discovery?.devices ?? const <PeerDevice>[]) {
         if (d.connected) {
           _peer = d;
+          debugPrint('[MySend] 自动选定已连接设备: ${d.name}');
           break;
         }
       }
@@ -107,6 +109,28 @@ class _HomePageState extends State<HomePage> {
     } else {
       await _showConnectResult(d, ok: false);
     }
+  }
+
+  /// 断开与指定设备的连接：从发现列表移除，并清空当前选中设备。
+  void _disconnect(PeerDevice d) {
+    scope.discovery?.removeDevice(d.id);
+    if (_peer?.id == d.id) {
+      setState(() => _peer = null);
+    }
+  }
+
+  /// Android 端确保「所有文件访问」权限（读写真实目录依赖）。
+  /// 未授权时提示并引导到系统设置开启，返回是否已就绪。
+  Future<bool> _checkFileAccess() async {
+    if (!isAndroid) return true;
+    final ok = await ensureFileAccess();
+    if (!mounted) return ok;
+    if (!ok) {
+      _toast('未获得「所有文件访问」权限，无法读写目录',
+          severity: InfoBarSeverity.error);
+      await openManageStorageSettings();
+    }
+    return ok;
   }
 
   /// 连接状态提示窗：居中蓝底玻璃、无按钮，短暂显示后自动消失（成功/失败两种）。
@@ -169,6 +193,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     if (_comparing[m.id] == true) return;
+    if (!await _checkFileAccess()) return;
     setState(() => _comparing[m.id] = true);
     try {
       final plan = isSender ? await _compareAsSender(m, peer) : await _compareAsReceiver(m, peer);
@@ -258,6 +283,7 @@ class _HomePageState extends State<HomePage> {
     if (peer == null || plan == null || plan.isEmpty || (_syncing[m.id] ?? false)) {
       return;
     }
+    if (!await _checkFileAccess()) return;
     setState(() => _syncing[m.id] = true);
 
     Future<int> runIt(
@@ -489,8 +515,10 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(width: 12),
             FilledButton(
-              child: Text(isLinking ? '连接中…' : (connected ? '已连接' : '连接')),
-              onPressed: (isLinking || connected) ? null : () => _connect(d),
+              child: Text(isLinking ? '连接中…' : (connected ? '断开' : '连接')),
+              onPressed: isLinking
+                  ? null
+                  : (connected ? () => _disconnect(d) : () => _connect(d)),
             ),
           ],
         ),
@@ -813,7 +841,7 @@ class _ConnectToastState extends State<_ConnectToast> {
   @override
   void initState() {
     super.initState();
-    _timer = Timer(const Duration(milliseconds: 2200), () {
+    _timer = Timer(const Duration(milliseconds: 1200), () {
       if (mounted) Navigator.pop(context);
     });
   }
