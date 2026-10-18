@@ -108,6 +108,9 @@ class DiscoveryService extends ChangeNotifier {
       if (json['t'] != 'hello') return; // 无关报文
       final peer = PeerDevice.fromEnvelope(json, datagram.address.address);
       if (peer.id.isEmpty || peer.id == deviceId) return; // 跳过自己/无效
+      // 单向传输（PC→Android）：仅保留对向角色设备，
+      // 发送端只显示接收端（手机/平板），接收端只显示发送端（电脑）。
+      if (peer.isSender == isSender) return;
       final existed = _devices[peer.id];
       // 已连接状态需跨广播心跳保持，不被后续报文重置。
       _devices[peer.id] = (existed != null && existed.connected)

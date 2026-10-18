@@ -50,10 +50,24 @@ class _HomePageState extends State<HomePage> {
 
   void _refresh() {
     if (!mounted) return;
+    final devices = scope.discovery?.devices ?? const <PeerDevice>[];
+    // 对端主动断开后，本端 _peer 仍指向已被移除的设备且广播会把它重新加回
+    // （此时 connected=false）；若不在此清空 _peer，下方 _deviceRow 中
+    // `connected = d.connected || _peer?.id == d.id` 会因残留 _peer 仍显示「已连接」。
+    if (_peer != null) {
+      var stillConnected = false;
+      for (final d in devices) {
+        if (d.id == _peer!.id && d.connected) {
+          stillConnected = true;
+          break;
+        }
+      }
+      if (!stillConnected) _peer = null;
+    }
     // 被动接受配对时（对端发起连接，本端自动接受并标记对方 connected），
     // 本端 _peer 尚未设置；这里自动选定已连接的设备，使双方都能发起对比/同步。
     if (_peer == null) {
-      for (final d in scope.discovery?.devices ?? const <PeerDevice>[]) {
+      for (final d in devices) {
         if (d.connected) {
           _peer = d;
           debugPrint('[MySend] 自动选定已连接设备: ${d.name}');
