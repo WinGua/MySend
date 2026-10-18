@@ -20,6 +20,7 @@ class SenderServer {
   final Future<bool> Function(PeerDevice requester) onPairRequest;
   final Future<void> Function(String name, int count, int bytes, List<String> files)?
       onSyncLog;
+  final Future<void> Function(String deviceId)? onDisconnect;
 
   HttpServer? _server;
 
@@ -28,6 +29,7 @@ class SenderServer {
     required this.mappingsProvider,
     required this.onPairRequest,
     this.onSyncLog,
+    this.onDisconnect,
   });
 
   bool get running => _server != null;
@@ -59,6 +61,9 @@ class SenderServer {
           break;
         case '/sync-log':
           await _handleSyncLog(req);
+          break;
+        case '/disconnect':
+          await _handleDisconnect(req);
           break;
         default:
           _writeJson(req, {'error': 'not found'}, status: 404);
@@ -136,6 +141,17 @@ class SenderServer {
             .map((x) => x.toString())
             .toList(),
       );
+      _writeJson(req, {'ok': true});
+    } catch (_) {
+      _writeJson(req, {'ok': false}, status: 400);
+    }
+  }
+
+  Future<void> _handleDisconnect(HttpRequest req) async {
+    final body = await utf8.decoder.bind(req).join();
+    try {
+      final e = jsonDecode(body) as Map<String, dynamic>;
+      await onDisconnect?.call(e['id'] as String? ?? '');
       _writeJson(req, {'ok': true});
     } catch (_) {
       _writeJson(req, {'ok': false}, status: 400);

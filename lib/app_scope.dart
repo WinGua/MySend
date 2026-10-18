@@ -56,6 +56,7 @@ class AppScope extends ChangeNotifier {
         mappingsProvider: () => config.config.mappings,
         onPairRequest: _onPairRequest,
         onSyncLog: _onSyncLog,
+        onDisconnect: _onDisconnect,
       );
       await server!.start();
     } else {
@@ -64,6 +65,7 @@ class AppScope extends ChangeNotifier {
         mappingsProvider: () => config.config.mappings,
         onPairRequest: _onPairRequest,
         onSyncLog: _onSyncLog,
+        onDisconnect: _onDisconnect,
       );
       await receiverServer!.start();
     }
@@ -87,6 +89,14 @@ class AppScope extends ChangeNotifier {
       totalBytes: bytes,
       files: files,
     );
+  }
+
+  /// 对端主动断开：从本机发现列表移除该设备（设备后续可通过广播被重新发现为未连接态）。
+  Future<void> _onDisconnect(String deviceId) async {
+    if (deviceId.isEmpty) return;
+    debugPrint('[MySend] 对端断开: $deviceId');
+    discovery?.removeDevice(deviceId);
+    notifyListeners();
   }
 
   Future<void> stopServices() async {

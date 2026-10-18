@@ -19,7 +19,6 @@ import '../../services/sync_engine.dart';
 import '../../services/transfer/receiver_client.dart';
 import '../../services/transfer/sender_client.dart';
 import '../widgets/glass.dart';
-import '../widgets/qr_widgets.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -111,12 +110,24 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 断开与指定设备的连接：从发现列表移除，并清空当前选中设备。
-  void _disconnect(PeerDevice d) {
+  /// 断开与指定设备的连接：本机移除并通知对端同步移除，清空当前选中设备。
+  Future<void> _disconnect(PeerDevice d) async {
     scope.discovery?.removeDevice(d.id);
     if (_peer?.id == d.id) {
       setState(() => _peer = null);
     }
+    // 通知对端本机已断开，避免对端仍显示「已连接」。
+    try {
+      if (isSender) {
+        final c = SenderClient(address: d.address, port: d.port);
+        await c.disconnect(scope.selfDescribe());
+        c.close();
+      } else {
+        final c = ReceiverClient(address: d.address, port: d.port);
+        await c.disconnect(scope.selfDescribe());
+        c.close();
+      }
+    } catch (_) {}
   }
 
   /// Android 端确保「所有文件访问」权限（读写真实目录依赖）。
@@ -138,49 +149,6 @@ class _HomePageState extends State<HomePage> {
     await showGlassDialog<Object?>(
       context: context,
       builder: (_) => _ConnectToast(d: d, ok: ok),
-    );
-  }
-
-  /// 手机端扫码添加设备并立即发起连接。
-  /// 先判断两端是否同一局域网：同网段则直接连接；异网则走「热点组网」教程。
-  Future<void> _scanPair() async {
-    final parsed = await Navigator.push<Map<String, dynamic>>(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const QrScannerPage(),
-        transitionsBuilder: (_, a, __, child) =>
-            FadeTransition(opacity: a, child: child),
-      ),
-    );
-    if (parsed == null || !mounted) return;
-    final ip = parsed['ip'] as String? ?? '';
-    if (ip.isEmpty) return;
-    final peer = PeerDevice.fromEnvelope(parsed, ip);
-
-    final sameLan = await inSameLan(ip);
-    if (!mounted) return;
-    if (sameLan) {
-      scope.discovery?.addScanned(peer);
-      setState(() => _peer = peer);
-      await _connect(peer);
-    } else {
-      await _hotspotPair();
-    }
-  }
-
-  /// 热点组网：仅展示一份手动组网教程，不做自动判定，用户自行操作后回到本页连接。
-  Future<void> _hotspotPair() async {
-    await showGlassDialog(
-      context: context,
-      builder: (_) => const _HotspotTutorialDialog(),
-    );
-  }
-
-  /// 电脑端展示连接二维码。
-  Future<void> _showPairQr() async {
-    await showGlassDialog(
-      context: context,
-      builder: (_) => const QrPairDialog(),
     );
   }
 
@@ -408,19 +376,6 @@ class _HomePageState extends State<HomePage> {
             _sectionTitle(isSender ? '已发现的接收设备' : '可用的发送设备'),
             for (final d in scope.discovery?.devices ?? const <PeerDevice>[])
               _deviceRow(d),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: isSender
-                  ? FilledButton(
-                      child: const Text('创建连接二维码'),
-                      onPressed: _showPairQr,
-                    )
-                  : FilledButton(
-                      child: const Text('扫码添加设备'),
-                      onPressed: _scanPair,
-                    ),
-            ),
             const SizedBox(height: 24),
             _sectionTitle('同步任务'),
             if (cfg.mappings.isEmpty)
@@ -633,7 +588,7 @@ class _LanHint extends StatelessWidget {
         SizedBox(width: 10),
         Expanded(
           child: Text(
-            '应用功能依赖局域网：请确保电脑与手机连接同一 Wi-Fi / 路由器。',
+            '应用功能依赖局域网：请确保电脑与手机连接同一 Wi-Fi，或让电脑连接手机热点。',
             style: TextStyle(fontSize: 13, color: Color(0xFFc0c0c0)),
           ),
         ),
@@ -824,7 +779,7 @@ class _SyncDialogState extends State<_SyncDialog> {
   }
 }
 
-/// 连接状态自动提示：无按钮，约 2.2 秒后自动关闭。
+/// 连接状态自动提示：无按钮，约 1.2 秒后自动关闭。
 class _ConnectToast extends StatefulWidget {
   final PeerDevice d;
   final bool ok;
@@ -859,12 +814,12 @@ class _ConnectToastState extends State<_ConnectToast> {
     return GlassDialog(
       title: ok ? '已连接' : '连接失败',
       content: SizedBox(
-        width: 260,
+        width: 240,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              ok ? '已连接「${d.name}」' : '无法连接「${d.name}」',
+              ok ? '「${d.name}」连接成功' : '「${d.name}」连接失败',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 14,
@@ -872,14 +827,6 @@ class _ConnectToastState extends State<_ConnectToast> {
                 color: ok ? null : const Color(0xFFE9AA7E),
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              ok
-                  ? '${d.address}:${d.port}'
-                  : '请检查设备是否在线、网络是否连通后重试。',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
-            ),
           ],
         ),
       ),
@@ -887,40 +834,3 @@ class _ConnectToastState extends State<_ConnectToast> {
   }
 }
 
-/// 热点组网教程弹窗：仅给出一份手动组网步骤提示，不做任何连接判定。
-class _HotspotTutorialDialog extends StatelessWidget {
-  const _HotspotTutorialDialog();
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassDialog(
-      title: '热点组网教程',
-      content: SizedBox(
-        width: 320,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text('当前手机与电脑不在同一网络，请手动组网：',
-                style: TextStyle(fontSize: 13, color: Color(0xFFc0c0c0))),
-            SizedBox(height: 12),
-            Text('1. 进入手机「设置 → 便携式热点」，开启热点；',
-                style: TextStyle(fontSize: 13)),
-            SizedBox(height: 4),
-            Text('2. 在电脑右下角 Wi-Fi 列表连接该热点（密码见手机热点页）；',
-                style: TextStyle(fontSize: 13)),
-            SizedBox(height: 4),
-            Text('3. 回到本页，电脑会自动被发现，再点「连接」继续。',
-                style: TextStyle(fontSize: 13)),
-          ],
-        ),
-      ),
-      actions: [
-        FilledButton(
-          child: const Text('知道了'),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ],
-    );
-  }
-}

@@ -17,10 +17,6 @@ class AppConstants {
   /// 当前应用版本（与 pubspec.yaml 的 version 保持一致，用于检查更新）。
   static const String currentVersion = '2.0.0';
 
-  /// 二维码配对协议 scheme。
-  static const String pairScheme = 'mysend';
-  static const String pairHost = 'pair';
-
   /// 项目仓库地址。
   static const String repoUrl = 'https://github.com/WinGua/MySend';
 

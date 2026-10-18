@@ -81,6 +81,20 @@ class ReceiverClient {
     }
   }
 
+  /// 通知对端本机已主动断开，让对端同步移除本机（避免残留「已连接」状态）。
+  Future<void> disconnect(Map<String, dynamic> selfInfo) async {
+    final http = _create();
+    try {
+      final req = await http.postUrl(_uri('/disconnect'));
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode(selfInfo));
+      final res = await req.close();
+      await res.drain<void>();
+    } finally {
+      http.close();
+    }
+  }
+
   /// 拉取某个映射在发送端的完整索引。
   Future<List<FileEntry>> getIndex(String mappingName) async {
     final http = _create();

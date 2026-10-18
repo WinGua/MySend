@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
@@ -8,7 +6,6 @@ import 'package:window_manager/window_manager.dart';
 import 'app.dart';
 import 'app_scope.dart';
 import 'core/utils.dart';
-import 'platform/permissions.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,11 +16,6 @@ Future<void> main() async {
   await scope.startServices();
 
   runApp(const MusicSyncApp());
-
-  // 首次启动集中申请所有运行时权限（Android）：相机 / 通知 / 文件访问 / 电池优化。
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (isAndroid) unawaited(requestAllInitialPermissions());
-  });
 }
 
 /// Windows：无边框窗口 + Mica/Acrylic 磨砂玻璃，失败则优雅回退。

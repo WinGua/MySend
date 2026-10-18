@@ -32,23 +32,6 @@ String get deviceForm {
   }
 }
 
-/// 获取本机第一个非回环 IPv4 地址（用于二维码配对与显示）。
-Future<String?> localIpv4Address() async {
-  try {
-    final nics = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLinkLocal: false,
-    );
-    for (final nic in nics) {
-      for (final addr in nic.addresses) {
-        final ip = addr.address;
-        if (ip.isNotEmpty && !ip.startsWith('127.')) return ip;
-      }
-    }
-  } catch (_) {}
-  return null;
-}
-
 /// 计算文件相对根目录的相对路径（统一使用 `/` 分隔，跨平台一致）。
 String toRelativePath(String root, String filePath) {
   final rel = p.relative(filePath, from: root).replaceAll('\\', '/');
@@ -63,27 +46,4 @@ bool isSafeWithin(String root, String relativePath) {
   return normalizedChild == normalizedRoot || normalizedChild.startsWith(prefix);
 }
 
-/// 判断目标 IP 是否与本机处于同一局域网（按 /24 网段比较，前三段一致即视为同网）。
-/// 相比探测端口，此方式不受系统防火墙拦截 TCP 入站的影响。
-///
-/// Android 手机常同时挂着蜂窝网络与 WiFi，本机会有多个 IP（如蜂窝 10.x.x.x、
-/// WiFi 192.168.1.x）。因此这里遍历本机所有 IPv4 地址，只要有一个与目标 IP
-/// 前三段一致即视为同网，避免取到错误的网卡地址导致同网误判。
-Future<bool> inSameLan(String address) async {
-  final b = address.split('.');
-  if (b.length != 4) return false;
-  try {
-    final nics = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLinkLocal: false,
-    );
-    for (final nic in nics) {
-      for (final addr in nic.addresses) {
-        final a = addr.address.split('.');
-        if (a.length != 4 || a[0] == '127') continue;
-        if (a[0] == b[0] && a[1] == b[1] && a[2] == b[2]) return true;
-      }
-    }
-  } catch (_) {}
-  return false;
-}
+

@@ -79,6 +79,20 @@ class SenderClient {
     }
   }
 
+  /// 通知对端本机已主动断开，让对端同步移除本机（避免残留「已连接」状态）。
+  Future<void> disconnect(Map<String, dynamic> selfInfo) async {
+    final http = _create();
+    try {
+      final req = await http.postUrl(_uri('/disconnect'));
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode(selfInfo));
+      final res = await req.close();
+      await res.drain<void>();
+    } finally {
+      http.close();
+    }
+  }
+
   /// 拉取接收端某个映射的目标目录索引（用于 PC 端对比）。
   Future<List<FileEntry>> getDestIndex(String mappingName) async {
     final http = _create();

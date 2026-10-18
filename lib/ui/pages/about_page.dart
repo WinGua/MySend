@@ -54,7 +54,7 @@ class AboutPage extends StatelessWidget {
                             ),
                             _section(
                               '功能特性',
-                              '· 局域网设备自动发现 + 扫码配对（异网时提供热点组网教程）\n'
+                              '· 局域网设备自动发现与手动连接\n'
                               '· 电脑端 / 手机端均可发起对比与同步\n'
                               '· 多组目录映射，两端根目录可独立配置\n'
                               '· 只同步新增文件，避免重复覆盖\n'
@@ -65,7 +65,6 @@ class AboutPage extends StatelessWidget {
                               '技术栈',
                               '· Flutter / Dart\n'
                               '· fluent_ui（Windows 风格 UI）\n'
-                              '· 二维码 / 扫码配对（qr_flutter + mobile_scanner）\n'
                               '· 局域网明文 HTTP 传输（后续可扩展加密）',
                             ),
                             _section(
