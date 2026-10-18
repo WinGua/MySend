@@ -91,11 +91,11 @@ class AppScope extends ChangeNotifier {
     );
   }
 
-  /// 对端主动断开：从本机发现列表移除该设备（设备后续可通过广播被重新发现为未连接态）。
+  /// 对端主动断开：把该设备标记为未连接（保留在列表中，仅切换状态）。
   Future<void> _onDisconnect(String deviceId) async {
     if (deviceId.isEmpty) return;
     debugPrint('[MySend] 对端断开: $deviceId');
-    discovery?.removeDevice(deviceId);
+    discovery?.markDisconnected(deviceId);
     notifyListeners();
   }
 

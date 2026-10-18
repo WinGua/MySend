@@ -13,7 +13,7 @@ import '../models/device_info.dart';
 /// 说明：组播（multicast）在部分 Android 上需要额外的 WifiManager MulticastLock，
 /// 且路由器的组播转发行为千差万别。这里改用更稳的 UDP 广播（255.255.255.255，
 /// 并额外向每个本机 IPv4 网段的 /24 广播地址发送），对家庭局域网覆盖更可靠；
-/// 无法广播到的场景，由「扫码配对」兜底。
+/// 无法被广播覆盖到的设备（如被路由器隔离）将无法被发现。
 class DiscoveryService extends ChangeNotifier {
   final String deviceId;
   final String deviceName;
@@ -36,7 +36,7 @@ class DiscoveryService extends ChangeNotifier {
   Iterable<PeerDevice> get devices =>
       _devices.values.toList()..sort((a, b) => a.name.compareTo(b.name));
 
-  /// 把「扫码配对」或「连接确认」得到的设备加入列表
+  /// 把「配对请求」或「连接确认」得到的设备加入列表
   /// （无广播心跳也保留，直至广播接管；[connected] 标记为已连接）。
   void addScanned(PeerDevice d, {bool connected = false}) {
     final existed = _devices[d.id];
@@ -45,9 +45,13 @@ class DiscoveryService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 移除指定设备（断开连接 / 主动删除）。
-  void removeDevice(String id) {
-    if (_devices.remove(id) != null) notifyListeners();
+  /// 断开连接后把设备标记为未连接（保留在列表中，仅切换状态），
+  /// 不再移除设备，避免设备从列表消失、需等待下一轮 UDP 广播才重新出现。
+  void markDisconnected(String id) {
+    final d = _devices[id];
+    if (d == null || !d.connected) return;
+    _devices[id] = d.copyWith(connected: false);
+    notifyListeners();
   }
 
   bool get running => _socket != null;

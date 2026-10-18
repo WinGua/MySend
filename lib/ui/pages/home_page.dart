@@ -124,9 +124,9 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 断开与指定设备的连接：本机移除并通知对端同步移除，清空当前选中设备。
+  /// 断开与指定设备的连接：本机标记为未连接并通知对端同步断开，清空当前选中设备。
   Future<void> _disconnect(PeerDevice d) async {
-    scope.discovery?.removeDevice(d.id);
+    scope.discovery?.markDisconnected(d.id);
     if (_peer?.id == d.id) {
       setState(() => _peer = null);
     }
