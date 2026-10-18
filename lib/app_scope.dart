@@ -73,6 +73,7 @@ class AppScope extends ChangeNotifier {
 
   /// 收到对端配对请求：自动接受并标记对端已连接（已移除人工确认步骤）。
   Future<bool> _onPairRequest(PeerDevice requester) async {
+    debugPrint('[MySend] 被动收到配对请求: ${requester.name} (${requester.address})');
     discovery?.addScanned(requester, connected: true);
     notifyListeners();
     return true;

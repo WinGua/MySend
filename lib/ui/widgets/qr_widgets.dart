@@ -144,6 +144,8 @@ class QrScannerPage extends StatefulWidget {
 
 class _QrScannerPageState extends State<QrScannerPage> {
   bool _handled = false;
+  bool _ready = false;
+  String _status = '正在请求相机权限…';
 
   @override
   void initState() {
@@ -151,10 +153,20 @@ class _QrScannerPageState extends State<QrScannerPage> {
     _ensureCamera();
   }
 
+  /// 首次进入先申请相机权限，授权通过后才构建 [MobileScanner]，
+  /// 避免「授权返回后相机 surface 未初始化、需重新进入扫码页」的问题。
   Future<void> _ensureCamera() async {
+    PermissionStatus status;
     try {
-      await Permission.camera.request();
-    } catch (_) {}
+      status = await Permission.camera.request();
+    } catch (_) {
+      status = PermissionStatus.denied;
+    }
+    if (!mounted) return;
+    setState(() {
+      _ready = status == PermissionStatus.granted;
+      if (!_ready) _status = '相机权限被拒绝，请返回后重试';
+    });
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -177,7 +189,13 @@ class _QrScannerPageState extends State<QrScannerPage> {
       header: const PageHeader(title: Text('扫码添加设备')),
       content: Stack(
         children: [
-          Positioned.fill(child: MobileScanner(onDetect: _onDetect)),
+          if (_ready)
+            Positioned.fill(child: MobileScanner(onDetect: _onDetect))
+          else
+            Center(
+              child: Text(_status,
+                  style: const TextStyle(fontSize: 14, color: Color(0xFFc0c0c0))),
+            ),
           Positioned(
             left: 0,
             right: 0,

@@ -21,7 +21,7 @@ Future<void> main() async {
   runApp(const MusicSyncApp());
 
   // 首次启动集中申请所有运行时权限（Android）：相机 / 通知 / 文件访问 / 电池优化。
-  WidgetsFlutterBinding.instance.addPostFrameCallback((_) {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
     if (isAndroid) unawaited(requestAllInitialPermissions());
   });
 }

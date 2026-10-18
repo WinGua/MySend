@@ -45,6 +45,11 @@ class DiscoveryService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 移除指定设备（断开连接 / 主动删除）。
+  void removeDevice(String id) {
+    if (_devices.remove(id) != null) notifyListeners();
+  }
+
   bool get running => _socket != null;
 
   Future<void> start() async {
