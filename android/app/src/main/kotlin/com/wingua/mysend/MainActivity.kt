@@ -1,4 +1,4 @@
-package com.example.music_sync
+package com.wingua.mysend
 
 import android.graphics.Color
 import android.os.Build

@@ -103,8 +103,9 @@ MySend/
 - **传输为局域网明文 HTTP**，未加密，仅建议在可信的局域网内使用。
 - **Windows 可执行文件未签名**，在其他电脑首次运行会弹出 SmartScreen，
   点「更多信息 → 仍要运行」即可。
-- **APK 使用固定 release 签名**，支持覆盖安装升级；若要上架 Google Play，
-  需自行配置正式签名与商店账号。
+- **APK 使用固定 release 签名**：从 v1.0.0 起应用包名统一为 `com.wingua.mysend`，
+  旧版 MySend（`com.example.music_sync`）无法直接覆盖升级，请卸载旧版后安装；
+  后续 1.x 版本可正常覆盖升级。若要上架 Google Play，需自行配置正式签名与商店账号。
 - **Android 端需要「所有文件访问」权限**来直接写入真实目录；若要上架 Google Play，
   需改用 SAF（文件夹选择器授权）方案。
 - **手机后台保活**依赖前台服务常驻通知；Android 15+ 对 `dataSync` 前台服务有

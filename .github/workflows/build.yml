@@ -27,7 +27,7 @@ jobs:
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: |
           mkdir -p keystore
-          echo "$ANDROID_KEYSTORE_B64" | base64 -d > keystore/my-send-release.keystore
+          echo "$ANDROID_KEYSTORE_B64" | base64 -d > keystore/mysend-release.keystore
 
       - name: 构建 APK
         env:
@@ -40,7 +40,7 @@ jobs:
       - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
-          name: my_send_android
+          name: mysend_android
           path: MySend-Android.apk
 
   windows:
@@ -66,7 +66,7 @@ jobs:
       - name: 上传 Windows 程序
         uses: actions/upload-artifact@v4
         with:
-          name: my_send_windows
+          name: mysend_windows
           path: MySend-Windows-x64.zip
 
   release:
@@ -80,11 +80,11 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: my_send_android
+          name: mysend_android
 
       - uses: actions/download-artifact@v4
         with:
-          name: my_send_windows
+          name: mysend_windows
 
       - name: 发布 GitHub Release
         run: |

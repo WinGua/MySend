@@ -9,13 +9,13 @@ class AppConstants {
   static const int transferPort = 53318;
 
   /// 配置文件文件名。
-  static const String configFileName = 'music_sync_config.json';
+  static const String configFileName = 'mysend_config.json';
 
   /// 当前协议版本，用于发现报文校验。
-  static const String protocolTag = 'music_sync/1';
+  static const String protocolTag = 'mysend/1';
 
   /// 当前应用版本（与 pubspec.yaml 的 version 保持一致，用于检查更新）。
-  static const String currentVersion = '2.0.0';
+  static const String currentVersion = '1.0.0';
 
   /// 项目仓库地址。
   static const String repoUrl = 'https://github.com/WinGua/MySend';

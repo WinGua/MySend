@@ -15,7 +15,7 @@ Future<void> main() async {
   await _initWindow();
   await scope.startServices();
 
-  runApp(const MusicSyncApp());
+  runApp(const MySendApp());
 }
 
 /// Windows：无边框窗口 + Mica/Acrylic 磨砂玻璃，失败则优雅回退。

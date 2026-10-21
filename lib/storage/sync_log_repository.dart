@@ -42,7 +42,7 @@ class SyncLogEntry {
 
 /// 同步日志仓库：持久化为本地 JSON，自动清理超 7 天的记录。
 class SyncLogRepository extends ChangeNotifier {
-  static const String _fileName = 'music_sync_logs.json';
+  static const String _fileName = 'mysend_logs.json';
   static const Duration _retention = Duration(days: 7);
 
   final List<SyncLogEntry> _entries = [];

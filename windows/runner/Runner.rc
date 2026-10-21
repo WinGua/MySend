@@ -89,11 +89,11 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
+            VALUE "CompanyName", "WinGua" "\0"
             VALUE "FileDescription", "MySend" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "MySend" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 WinGua. All rights reserved." "\0"
             VALUE "OriginalFilename", "MySend.exe" "\0"
             VALUE "ProductName", "MySend" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
