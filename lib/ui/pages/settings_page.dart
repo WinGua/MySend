@@ -110,7 +110,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     scope.config.setTransferPort(port);
     await _restartServices();
-    if (mounted) await _notice('已保存', '服务端口已切换为 $port。');
+    if (mounted) await _notice('已保存', '服务端口已切换为 ${scope.localPort}。');
   }
 
   Future<void> _restartServices() async {
@@ -270,7 +270,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   _tile(
                     icon: FluentIcons.plug_connected,
                     title: '服务端口',
-                    subtitle: '${cfg.transferPort}',
+                    subtitle: '${scope.localPort}',
                     onTap: _editPort,
                   ),
                   _divider(),

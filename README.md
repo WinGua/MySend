@@ -29,6 +29,8 @@ MySend 面向「电脑 → 手机」这一最常见的单向归档场景：无�
   成功手动关闭、失败展示原因。
 - **机型识别**：连接 / 本机按真实形态展示电脑、平板、手机图标。
 - **手机后台保活**：Android 端以前台服务 + 常驻通知保活，切后台 / 黑屏不掉线。
+- **断点续传**：中断、切网或锁屏后可只补传剩余字节；文件先落分片再原子替换，
+  不会在目标目录留下半截文件。
 - **同步日志**：设置页记录每次同步的任务名、时间、文件数与总大小，自动清理 7 天前记录。
 - **关于与更新**：内置「关于 MySend」介绍页、「GitHub 仓库」快捷跳转，以及
   「检查更新」一键比对最新版本。
@@ -45,7 +47,9 @@ MySend 面向「电脑 → 手机」这一最常见的单向归档场景：无�
    - 发送端有、接收端没有 → **新增** → 传输
    - 接收端已有 → **跳过**（不重复下载、不比对内容、不处理删除）
 4. 确认差异清单后，通过局域网 HTTP 把新增文件从电脑传输到手机对应目录。
-   （当前为明文 HTTP，尚未启用 TLS 加密）
+   传输协议为 v2：配对后签发会话 token，每个文件先写入目标目录下的
+   `.mysend-part` 分片，校验字节数后原子改名到最终路径；中断后按分片偏移续传，
+   手机端主动拉取时使用 HTTP Range 续传。当前为明文 HTTP，尚未启用 TLS 加密。
 
 ## 技术栈
 
@@ -54,6 +58,7 @@ MySend 面向「电脑 → 手机」这一最常见的单向归档场景：无�
 - [window_manager](https://pub.dev/packages/window_manager) + [flutter_acrylic](https://pub.dev/packages/flutter_acrylic)（无边框窗口与磨砂玻璃）
 - [url_launcher](https://pub.dev/packages/url_launcher)（打开仓库链接 / 下载页）
 - [wakelock_plus](https://pub.dev/packages/wakelock_plus)（同步期间唤醒锁）
+- [crypto](https://pub.dev/packages/crypto)（生成分片文件名）
 - Dart
 
 ## 目录结构

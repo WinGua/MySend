@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../core/constants.dart';
+
 /// 一条同步任务日志。
 class SyncLogEntry {
   final String mappingName; // 任务名称
@@ -42,7 +44,6 @@ class SyncLogEntry {
 
 /// 同步日志仓库：持久化为本地 JSON，自动清理超 7 天的记录。
 class SyncLogRepository extends ChangeNotifier {
-  static const String _fileName = 'mysend_logs.json';
   static const Duration _retention = Duration(days: 7);
 
   final List<SyncLogEntry> _entries = [];
@@ -54,7 +55,7 @@ class SyncLogRepository extends ChangeNotifier {
 
   Future<File> _file() async {
     final dir = await getApplicationSupportDirectory();
-    return File(p.join(dir.path, _fileName));
+    return File(p.join(dir.path, AppConstants.logFileName));
   }
 
   Future<void> load() async {

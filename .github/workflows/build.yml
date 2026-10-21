@@ -22,6 +22,10 @@ jobs:
       - name: 安装依赖
         run: flutter pub get
 
+      - name: 运行单元测试（仅提示，不阻断构建）
+        continue-on-error: true
+        run: flutter test
+
       - name: 写入签名密钥（来自 Secrets）
         env:
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}

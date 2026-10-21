@@ -23,6 +23,10 @@ class LocalIndexService {
     }
 
     int count = 0;
+    // 限制并发 stat 数量：既避免串行扫描大目录过慢，也避免一次打开过多句柄。
+    final pending = <Future<void>>[];
+    const maxInflight = 8;
+
     await for (final entity in dir.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
 
@@ -30,21 +34,37 @@ class LocalIndexService {
       if (rel.isEmpty) continue;
       if (_isIgnoredPath(rel)) continue; // 跳过隐藏/系统文件及隐藏目录内容
 
-      try {
-        final stat = await entity.stat();
-        result[rel] = FileEntry(
-          relativePath: rel,
-          size: stat.size,
-          mtimeMs: stat.modified.millisecondsSinceEpoch,
-        );
+      pending.add(_addEntry(entity, rel, result, () {
         count++;
         onProgress?.call(count);
-      } catch (_) {
-        // 单个文件读取失败不影响整体扫描。
+      }));
+      if (pending.length >= maxInflight) {
+        await pending.removeAt(0);
       }
     }
+    await Future.wait(pending);
 
     return result;
+  }
+
+  /// 读取单个文件元数据并写入索引；失败时忽略，不影响整体扫描。
+  static Future<void> _addEntry(
+    File file,
+    String rel,
+    Map<String, FileEntry> result,
+    void Function() onCounted,
+  ) async {
+    try {
+      final stat = await file.stat();
+      result[rel] = FileEntry(
+        relativePath: rel,
+        size: stat.size,
+        mtimeMs: stat.modified.millisecondsSinceEpoch,
+      );
+      onCounted();
+    } catch (_) {
+      // 单个文件读取失败不影响整体扫描。
+    }
   }
 
   /// 判断相对路径是否应被忽略：跳过不应同步的系统/临时/缓存文件与隐藏目录。
@@ -68,6 +88,9 @@ class LocalIndexService {
 
   /// 校验安全路径并解析为绝对路径；非法则返回 null。
   static File? safeFile(String root, String relativePath) {
+    if (!isValidRelPath(relativePath)) {
+      return null;
+    }
     if (!isSafeWithin(root, relativePath)) {
       return null;
     }

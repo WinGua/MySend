@@ -27,6 +27,7 @@ dependencies:
   # 工具
   uuid: ^4.4.0
   url_launcher: ^6.2.5
+  crypto: ^3.0.3
 
 dependency_overrides:
   # 以下插件的新版本要求 AGP>=8.12.1 / Gradle>=8.13 / Kotlin 2.2 / compileSdk 35，

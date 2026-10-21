@@ -1,18 +1,21 @@
-import 'dart:async';
 import 'dart:io';
 import 'package:path/path.dart' as p;
 
+import '../core/constants.dart';
+import '../core/utils.dart';
 import '../models/file_entry.dart';
 import '../models/sync_mapping.dart';
 import '../models/sync_plan.dart';
-import 'transfer/receiver_client.dart';
-import 'transfer/sender_client.dart';
+import 'local_index_service.dart';
+import 'transfer/part_store.dart';
+import 'transfer/peer_client.dart';
 
 /// 同步引擎：计算差异、执行单向传输（发送端 → 接收端）。
 ///
 /// 规则：
 /// - 「新增」= 发送端索引中存在、接收端不存在的相对路径 → 待传。
 /// - 只同步新增文件，不比对内容、不处理删除。
+/// - 传输走协议 v2：先落 `.mysend-part` 分片，完成后原子改名。
 class SyncEngine {
   SyncEngine._();
 
@@ -40,79 +43,158 @@ class SyncEngine {
     );
   }
 
-  /// 依次下载 [files] 到接收端 [mapping.destPath] 对应子目录。
+  /// 依次从对端拉取 [files] 写入本机 [mapping.destPath]。
   ///
-  /// 返回失败的文件数：单个文件失败不会中断整个任务，跳过并继续，
-  /// 避免「连续传输多文件后某个文件卡住导致任务整体死等」。
+  /// 单个文件失败不中断任务，返回失败数量。调用方负责关闭 [client]。
   static Future<int> run({
     required SyncMapping mapping,
-    required ReceiverClient client,
+    required PeerClient client,
     required List<FileEntry> files,
     required void Function(int done, int total, FileEntry current) onProgress,
+    void Function(FileEntry entry, Object error)? onFailure,
   }) async {
     final total = files.length;
     var failed = 0;
-    try {
-      for (var i = 0; i < total; i++) {
-        final e = files[i];
-        final destFile = p.join(
-          mapping.destPath,
-          e.relativePath.replaceAll('/', Platform.pathSeparator),
-        );
-        try {
-          await client
-              .downloadFile(mapping.name, e.relativePath, destFile, mtimeMs: e.mtimeMs)
-              .timeout(_fileTimeout(e.size));
-          onProgress(i + 1 - failed, total, e);
-        } catch (_) {
-          failed++;
-        }
+    for (var i = 0; i < total; i++) {
+      final e = files[i];
+      try {
+        await _pullOne(mapping, client, e);
+        onProgress(i + 1 - failed, total, e);
+      } catch (err) {
+        failed++;
+        onFailure?.call(e, err);
       }
-    } finally {
-      client.close();
     }
     return failed;
   }
 
-  /// 依次把 [files] 从发送端推送到接收端（供 PC 发起同步时使用）。
+  /// 依次把 [files] 推送到对端（供 PC 发起同步时使用）。
   ///
-  /// 返回失败的文件数（语义同 [run]）。
+  /// 单个文件失败不中断任务，返回失败数量。调用方负责关闭 [client]。
   static Future<int> push({
     required SyncMapping mapping,
-    required SenderClient client,
+    required PeerClient client,
     required List<FileEntry> files,
     required void Function(int done, int total, FileEntry current) onProgress,
+    void Function(FileEntry entry, Object error)? onFailure,
   }) async {
     final total = files.length;
-    var failed = 0;
+    // 先批量查询续传偏移，正常情况整批文件只需一次请求。
+    var offsets = const <String, int>{};
     try {
-      for (var i = 0; i < total; i++) {
-        final e = files[i];
-        final srcFile = p.join(
-          mapping.sourcePath,
-          e.relativePath.replaceAll('/', Platform.pathSeparator),
+      final merged = <String, int>{};
+      const chunkSize = 2000;
+      for (var i = 0; i < files.length; i += chunkSize) {
+        final end = (i + chunkSize < files.length) ? i + chunkSize : files.length;
+        merged.addAll(
+          await client.resumeOffsets(mapping, files.sublist(i, end)),
         );
-        try {
-          await client
-              .uploadFile(mapping.name, e.relativePath, srcFile)
-              .timeout(_fileTimeout(e.size));
-          onProgress(i + 1 - failed, total, e);
-        } catch (_) {
-          failed++;
-        }
       }
-    } finally {
-      client.close();
+      offsets = merged;
+    } catch (_) {
+      // 对端不支持批量查询时回退为逐文件查询。
+    }
+
+    var failed = 0;
+    for (var i = 0; i < total; i++) {
+      final e = files[i];
+      final srcFile = p.join(
+        mapping.sourcePath,
+        e.relativePath.replaceAll('/', Platform.pathSeparator),
+      );
+      try {
+        final start = offsets[e.relativePath] ??
+            await client
+                .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
+                .timeout(AppConstants.controlTimeout);
+        try {
+          await client.upload(
+            mapping,
+            e.relativePath,
+            File(srcFile),
+            mtimeMs: e.mtimeMs,
+            start: start,
+          );
+        } on TransferException catch (err) {
+          // 分片在批量查询后发生变化（如被对端清理）：重查一次偏移后重试。
+          if (err.status != 416) rethrow;
+          final retryStart = start > 0
+              ? 0
+              : await client
+                  .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
+                  .timeout(AppConstants.controlTimeout);
+          await client.upload(
+            mapping,
+            e.relativePath,
+            File(srcFile),
+            mtimeMs: e.mtimeMs,
+            start: retryStart,
+          );
+        }
+        onProgress(i + 1 - failed, total, e);
+      } catch (err) {
+        failed++;
+        onFailure?.call(e, err);
+      }
     }
     return failed;
   }
 
-  /// 单个文件的传输超时：按文件大小保守估算（约 256KB/s），
-  /// 下限 30 秒、上限 10 分钟，覆盖小文件卡死与大文件正常传输。
-  static Duration _fileTimeout(int bytes) {
-    var sec = (bytes / (256 * 1024)).ceil();
-    if (sec < 30) sec = 30;
-    if (sec > 600) sec = 600;
-    return Duration(seconds: sec);
+  /// 拉取单个文件：分片续传 + 原子落盘 + 回写 mtime。
+  static Future<void> _pullOne(
+    SyncMapping mapping,
+    PeerClient client,
+    FileEntry e,
+  ) async {
+    final root = mapping.destPath;
+    final rel = e.relativePath;
+    if (!isValidRelPath(rel)) {
+      throw const TransferException(400, 'PATH_INVALID', '对端返回了非法路径');
+    }
+    final part = PartStore.partFile(root, rel);
+
+    final offset = await PartStore.currentOffset(root, rel, e.size, e.mtimeMs);
+    await PartStore.writeMeta(
+      root,
+      rel,
+      PartMeta(path: rel, size: e.size, mtime: e.mtimeMs),
+    );
+
+    if (offset < e.size) {
+      await client.download(mapping, e, part, start: offset);
+    } else if (!await part.exists()) {
+      // 空文件不会触发下载，需显式创建 0 字节分片以便后续原子改名。
+      await part.parent.create(recursive: true);
+      await part.writeAsBytes(const <int>[]);
+    }
+
+    final received = await part.length();
+    if (received > e.size) {
+      await PartStore.discard(root, rel);
+      throw const TransferException(409, 'INCOMPLETE', '数据超出预期大小，已重置分片');
+    }
+    if (received != e.size) {
+      throw const TransferException(409, 'INCOMPLETE', '拉取数据不完整，已保留分片');
+    }
+
+    final dst = LocalIndexService.safeFile(root, rel);
+    if (dst == null) {
+      throw const TransferException(400, 'PATH_INVALID', '路径非法');
+    }
+    await dst.parent.create(recursive: true);
+    try {
+      await part.rename(dst.path);
+    } on FileSystemException {
+      if (await dst.exists()) await dst.delete();
+      await part.rename(dst.path);
+    }
+    if (e.mtimeMs > 0) {
+      try {
+        await dst.setLastModified(
+          DateTime.fromMillisecondsSinceEpoch(e.mtimeMs),
+        );
+      } catch (_) {}
+    }
+    await PartStore.discard(root, rel);
   }
 }

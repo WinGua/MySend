@@ -80,6 +80,7 @@ class AboutPage extends StatelessWidget {
                           const SizedBox(height: 14),
                           _line('版本', AppConstants.currentVersion),
                           _line('平台', 'Windows 发送端 / Android 接收端'),
+                          _line('传输协议', 'v2 · 会话鉴权 / 断点续传'),
                           _line('发现端口', '${AppConstants.discoveryPort}/udp'),
                           _line('传输端口',
                               '默认 ${AppConstants.transferPort}/http'),
@@ -124,6 +125,8 @@ class AboutPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 8),
                           const Text(
+                            '连接后使用会话 token 鉴权；文件传输先写入目标目录下的 '
+                            '.mysend-part 分片，完成后原子替换，中断可续传。\n'
                             '当前使用局域网明文 HTTP 传输，未启用 TLS 加密，'
                             '建议仅在可信的家庭或办公网络内使用。'
                             '应用不会上传任何文件到互联网。',

@@ -19,8 +19,6 @@ import '../../models/sync_plan.dart';
 import '../../platform/permissions.dart';
 import '../../services/local_index_service.dart';
 import '../../services/sync_engine.dart';
-import '../../services/transfer/receiver_client.dart';
-import '../../services/transfer/sender_client.dart';
 import '../widgets/glass.dart';
 
 const _accent = Color(0xFF4A9EFF);
@@ -43,6 +41,7 @@ class _HomePageState extends State<HomePage> {
   final Map<String, bool> _comparing = {};
   final Map<String, bool> _syncing = {};
   final Map<String, bool> _connecting = {};
+  final Map<String, String> _planSignatures = {};
 
   @override
   void initState() {
@@ -80,6 +79,17 @@ class _HomePageState extends State<HomePage> {
         }
       }
     }
+    // 映射被删除或路径被修改后，旧对比结果不再可信。
+    final mappings = scope.config.config.mappings;
+    final validIds = {for (final m in mappings) m.id};
+    _plans.removeWhere((id, _) => !validIds.contains(id));
+    _planSignatures.removeWhere((id, _) => !validIds.contains(id));
+    for (final m in mappings) {
+      final sig = '${m.sourcePath}|${m.destPath}';
+      final prev = _planSignatures[m.id];
+      if (prev != null && prev != sig) _plans.remove(m.id);
+      _planSignatures[m.id] = sig;
+    }
     setState(() {});
   }
 
@@ -103,25 +113,12 @@ class _HomePageState extends State<HomePage> {
   Future<void> _connect(PeerDevice d) async {
     if (_connecting[d.id] == true) return;
     setState(() => _connecting[d.id] = true);
-    bool ok = false;
-    try {
-      if (isSender) {
-        final c = SenderClient(address: d.address, port: d.port);
-        ok = await c.sendPairRequest(scope.selfDescribe());
-        c.close();
-      } else {
-        final c = ReceiverClient(address: d.address, port: d.port);
-        ok = await c.sendPairRequest(scope.selfDescribe());
-        c.close();
-      }
-    } catch (_) {
-      ok = false;
-    }
+    final ok = await scope.connect(d);
     if (!mounted) return;
     setState(() => _connecting[d.id] = false);
     if (ok) {
-      final linked = d.copyWith(connected: true);
-      scope.discovery?.addScanned(linked, connected: true);
+      final linked = (scope.discovery?.devices ?? const <PeerDevice>[])
+          .firstWhere((e) => e.id == d.id, orElse: () => d.copyWith(connected: true));
       setState(() => _peer = linked);
       await _showConnectResult(linked, ok: true);
     } else {
@@ -130,21 +127,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _disconnect(PeerDevice d) async {
-    scope.discovery?.markDisconnected(d.id);
     if (_peer?.id == d.id) {
       setState(() => _peer = null);
     }
-    try {
-      if (isSender) {
-        final c = SenderClient(address: d.address, port: d.port);
-        await c.disconnect(scope.selfDescribe());
-        c.close();
-      } else {
-        final c = ReceiverClient(address: d.address, port: d.port);
-        await c.disconnect(scope.selfDescribe());
-        c.close();
-      }
-    } catch (_) {}
+    await scope.disconnect(d);
   }
 
   Future<bool> _checkFileAccess() async {
@@ -191,9 +177,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<SyncPlan> _compareAsSender(SyncMapping m, PeerDevice peer) async {
-    final client = SenderClient(address: peer.address, port: peer.port);
+    final client = scope.clientFor(peer);
     try {
-      final dest = await client.getDestIndex(m.name);
+      final dest = await client.fetchIndex(m.name);
       final destMap = {for (final e in dest) e.relativePath: e};
       final srcMap = await LocalIndexService.scan(m.sourcePath);
       return SyncEngine.computePlan(mapping: m, source: srcMap, dest: destMap);
@@ -203,9 +189,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<SyncPlan> _compareAsReceiver(SyncMapping m, PeerDevice peer) async {
-    final client = ReceiverClient(address: peer.address, port: peer.port);
+    final client = scope.clientFor(peer);
     try {
-      final src = await client.getIndex(m.name);
+      final src = await client.fetchIndex(m.name);
       final srcMap = {for (final e in src) e.relativePath: e};
       final destMap = await LocalIndexService.scan(m.destPath);
       return SyncEngine.computePlan(mapping: m, source: srcMap, dest: destMap);
@@ -271,44 +257,68 @@ class _HomePageState extends State<HomePage> {
     if (peer == null || plan == null || plan.isEmpty || (_syncing[m.id] ?? false)) {
       return;
     }
+    // 同一时刻只允许一个同步任务，避免两端并发写入互相干扰。
+    if (_syncing.values.any((v) => v)) {
+      _toast('已有同步任务在进行，请等待完成');
+      return;
+    }
     if (!await _checkFileAccess()) return;
     setState(() => _syncing[m.id] = true);
 
+    // 记录成功文件与失败原因，供日志和结果弹窗使用。
+    final failures = <String>[];
+    final syncedNames = <String>[];
+    var syncedBytes = 0;
+
     Future<int> runIt(
         void Function(int done, int total, FileEntry current) onProgress) async {
-      final int failed;
-      if (isSender) {
-        final client = SenderClient(address: peer.address, port: peer.port);
-        failed = await SyncEngine.push(
-          mapping: m,
-          client: client,
-          files: plan.toSend,
-          onProgress: onProgress,
-        );
+      final client = scope.clientFor(peer);
+      final localServer = scope.transferServer;
+      localServer?.busy = true;
+      try {
+        void onDone(int done, int total, FileEntry current) {
+          syncedNames.add(current.relativePath.split('/').last);
+          syncedBytes += current.size;
+          onProgress(done, total, current);
+        }
+
+        void onFailure(FileEntry entry, Object error) {
+          if (failures.length < 20) {
+            failures.add('${entry.relativePath}：$error');
+          }
+        }
+
+        final failed = isSender
+            ? await SyncEngine.push(
+                mapping: m,
+                client: client,
+                files: plan.toSend,
+                onProgress: onDone,
+                onFailure: onFailure,
+              )
+            : await SyncEngine.run(
+                mapping: m,
+                client: client,
+                files: plan.toSend,
+                onProgress: onDone,
+                onFailure: onFailure,
+              );
         await _persistSyncLog(
-          failed: failed,
-          plan: plan,
-          mapping: m,
-          push: (name, count, bytes, files) => client.sendSyncLog(
-              name: name, fileCount: count, totalBytes: bytes, files: files),
+          name: m.name,
+          syncedNames: syncedNames,
+          syncedBytes: syncedBytes,
+          push: (name, count, bytes, files) => client.sendLog(
+            name: name,
+            fileCount: count,
+            totalBytes: bytes,
+            files: files,
+          ),
         );
-      } else {
-        final client = ReceiverClient(address: peer.address, port: peer.port);
-        failed = await SyncEngine.run(
-          mapping: m,
-          client: client,
-          files: plan.toSend,
-          onProgress: onProgress,
-        );
-        await _persistSyncLog(
-          failed: failed,
-          plan: plan,
-          mapping: m,
-          push: (name, count, bytes, files) => client.sendSyncLog(
-              name: name, fileCount: count, totalBytes: bytes, files: files),
-        );
+        return failed;
+      } finally {
+        localServer?.busy = false;
+        client.close();
       }
-      return failed;
     }
 
     if (isAndroid) {
@@ -322,6 +332,7 @@ class _HomePageState extends State<HomePage> {
       builder: (_) => _SyncDialog(
         mappingName: m.name,
         totalBytes: plan.totalBytes,
+        failures: failures,
         run: runIt,
       ),
     );
@@ -350,25 +361,22 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _persistSyncLog({
-    required int failed,
-    required SyncPlan plan,
-    required SyncMapping mapping,
+    required String name,
+    required List<String> syncedNames,
+    required int syncedBytes,
     required Future<void> Function(
             String name, int count, int bytes, List<String> files)
         push,
   }) async {
-    final successCount = plan.toSend.length - failed;
-    if (successCount <= 0) return;
-    final syncedNames =
-        plan.toSend.map((e) => e.relativePath.split('/').last).toList();
+    if (syncedNames.isEmpty) return;
     await scope.syncLog.add(
-      name: mapping.name,
-      fileCount: successCount,
-      totalBytes: plan.totalBytes,
+      name: name,
+      fileCount: syncedNames.length,
+      totalBytes: syncedBytes,
       files: syncedNames,
     );
     try {
-      await push(mapping.name, successCount, plan.totalBytes, syncedNames);
+      await push(name, syncedNames.length, syncedBytes, syncedNames);
     } catch (_) {}
   }
 
@@ -397,7 +405,7 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 18),
             _localCard(
               cfg.deviceName,
-              cfg.transferPort,
+              scope.localPort,
               mappings.length,
               running,
             ),
@@ -587,6 +595,7 @@ class _HomePageState extends State<HomePage> {
     final plan = _plans[m.id];
     final comparing = _comparing[m.id] == true;
     final syncing = _syncing[m.id] == true;
+    final anySyncing = _syncing.values.any((v) => v);
     final connected = _peer != null;
     final path = isSender ? m.sourcePath : m.destPath;
 
@@ -598,8 +607,11 @@ class _HomePageState extends State<HomePage> {
     } else if (syncing) {
       status = '同步中…';
       statusColor = _warning;
+    } else if (!connected) {
+      status = '未连接';
+      statusColor = _muted;
     } else if (plan == null) {
-      status = connected ? '未对比' : '未连接';
+      status = '未对比';
       statusColor = _muted;
     } else if (plan.isEmpty) {
       status = '已一致';
@@ -647,7 +659,7 @@ class _HomePageState extends State<HomePage> {
                 ),
               const Spacer(),
               Button(
-                onPressed: connected && !comparing && !syncing
+                onPressed: connected && !comparing && !syncing && !anySyncing
                     ? () => _compare(m)
                     : null,
                 child: Text(
@@ -660,6 +672,7 @@ class _HomePageState extends State<HomePage> {
                 onPressed: connected &&
                         !comparing &&
                         !syncing &&
+                        !anySyncing &&
                         plan != null &&
                         !plan.isEmpty
                     ? () => _sync(m)
@@ -822,12 +835,16 @@ class _SyncProgress {
 class _SyncDialog extends StatefulWidget {
   final String mappingName;
   final int totalBytes;
+
+  /// 同步过程中收集到的失败原因（最多 20 条），由调用方持有。
+  final List<String> failures;
   final Future<int> Function(
       void Function(int done, int total, FileEntry current)) run;
 
   const _SyncDialog({
     required this.mappingName,
     required this.totalBytes,
+    required this.failures,
     required this.run,
   });
 
@@ -945,6 +962,25 @@ class _SyncDialogState extends State<_SyncDialog> {
                           '$_failed 个文件失败，请重新对比后重试',
                           style: const TextStyle(fontSize: 11, color: _warning),
                         ),
+                      ],
+                      if (finished && widget.failures.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        for (final f in widget.failures.take(3))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Text(
+                              '· $f',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontSize: 11, color: _danger),
+                            ),
+                          ),
+                        if (widget.failures.length > 3)
+                          Text(
+                            '…等 ${widget.failures.length} 项',
+                            style: const TextStyle(fontSize: 11, color: _danger),
+                          ),
                       ],
                       if (!finished && speed > 0) ...[
                         const SizedBox(height: 2),
