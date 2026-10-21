@@ -389,7 +389,7 @@ class _HomePageState extends State<HomePage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
           children: [
-            PageHeader(
+            AppPageHeader(
               title: '状态',
               subtitle:
                   'MySend · ${isSender ? '电脑发送端' : '安卓接收端'} · 局域网单向同步',
@@ -492,11 +492,11 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           const SizedBox(height: 14),
-          InfoRow('服务端口', '$port'),
-          InfoRow('映射数量', '$mappingCount'),
+          InfoRow(label: '服务端口', value: '$port'),
+          InfoRow(label: '映射数量', value: '$mappingCount'),
           InfoRow(
-            '设备标识',
-            scope.config.config.deviceId.length > 8
+            label: '设备标识',
+            value: scope.config.config.deviceId.length > 8
                 ? scope.config.config.deviceId.substring(0, 8)
                 : scope.config.config.deviceId,
           ),

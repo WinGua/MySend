@@ -221,12 +221,12 @@ class GlassDialog extends StatelessWidget {
 }
 
 /// 页面标题区：大标题 + 一行说明，可带右侧操作。
-class PageHeader extends StatelessWidget {
+class AppPageHeader extends StatelessWidget {
   final String title;
   final String subtitle;
   final Widget? trailing;
 
-  const PageHeader({
+  const AppPageHeader({
     super.key,
     required this.title,
     required this.subtitle,

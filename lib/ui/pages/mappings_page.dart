@@ -84,7 +84,7 @@ class _MappingsPageState extends State<MappingsPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
           children: [
-            PageHeader(
+            AppPageHeader(
               title: '映射',
               subtitle: isSender
                   ? '为每组同步任务选择电脑上的源目录；手机端配置同名映射的目标目录。'

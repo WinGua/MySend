@@ -251,7 +251,7 @@ class _SettingsPageState extends State<SettingsPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
           children: [
-            const PageHeader(
+            const AppPageHeader(
               title: '设置',
               subtitle: '设备信息、同步日志与应用更新',
             ),
