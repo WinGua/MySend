@@ -26,19 +26,12 @@ jobs:
         continue-on-error: true
         run: flutter test
 
-      - name: 测试诊断（仅提示，不阻断构建）
-        continue-on-error: true
-        run: |
-          flutter test > test.log 2>&1 || true
-          cat test.log
-          tail -n 10 test.log | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::$line"; done
-
       - name: 静态分析（仅提示，不阻断构建）
         continue-on-error: true
         run: |
           flutter analyze --no-pub > analyze.txt 2>&1 || true
           cat analyze.txt
-          tail -n 10 analyze.txt | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::$line"; done
+          grep -E '[[:space:]]error •' analyze.txt | head -n 10 | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::$line"; done
 
       - name: 写入签名密钥（来自 Secrets）
         env:

@@ -283,7 +283,7 @@ class PeerClient {
   }
 
   Future<Map<String, dynamic>> _readJson(
-    HttpResponse res, {
+    HttpClientResponse res, {
     Duration? timeout,
   }) async {
     try {
