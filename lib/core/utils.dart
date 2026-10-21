@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -6,6 +7,21 @@ import 'package:uuid/uuid.dart';
 
 /// 生成一个 UUID（用作设备 id / 映射 id）。
 String newUuid() => const Uuid().v4();
+
+/// 延迟释放控制器，等待弹窗退场动画结束后再销毁。
+void disposeControllerLater(TextEditingController controller) {
+  Timer(const Duration(milliseconds: 400), controller.dispose);
+}
+
+/// 将字节数格式化为便于阅读的字符串。
+String formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+}
 
 /// 是否运行在 Windows 桌面端。
 bool get isWindows => !kIsWeb && Platform.isWindows;

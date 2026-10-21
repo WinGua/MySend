@@ -1,9 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/animation.dart' show AnimationController;
 import 'package:flutter/foundation.dart' show ValueNotifier, debugPrint;
 import 'package:flutter/widgets.dart'
-    show ValueListenableBuilder, TweenAnimationBuilder;
-import 'package:flutter/animation.dart' show Curves, Tween;
+    show
+        AnimatedBuilder,
+        SingleTickerProviderStateMixin,
+        ValueListenableBuilder;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -19,6 +22,13 @@ import '../../services/sync_engine.dart';
 import '../../services/transfer/receiver_client.dart';
 import '../../services/transfer/sender_client.dart';
 import '../widgets/glass.dart';
+
+const _accent = Color(0xFF4A9EFF);
+const _success = Color(0xFF7BE0A0);
+const _danger = Color(0xFFFF9B9B);
+const _warning = Color(0xFFFFC46B);
+const _muted = Color(0xFF8A8A8A);
+const _muted2 = Color(0xFF9A9A9A);
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -51,9 +61,6 @@ class _HomePageState extends State<HomePage> {
   void _refresh() {
     if (!mounted) return;
     final devices = scope.discovery?.devices ?? const <PeerDevice>[];
-    // 对端主动断开后，本端 _peer 仍指向已被移除的设备且广播会把它重新加回
-    // （此时 connected=false）；若不在此清空 _peer，下方 _deviceRow 中
-    // `connected = d.connected || _peer?.id == d.id` 会因残留 _peer 仍显示「已连接」。
     if (_peer != null) {
       var stillConnected = false;
       for (final d in devices) {
@@ -64,8 +71,6 @@ class _HomePageState extends State<HomePage> {
       }
       if (!stillConnected) _peer = null;
     }
-    // 被动接受配对时（对端发起连接，本端自动接受并标记对方 connected），
-    // 本端 _peer 尚未设置；这里自动选定已连接的设备，使双方都能发起对比/同步。
     if (_peer == null) {
       for (final d in devices) {
         if (d.connected) {
@@ -124,13 +129,11 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 断开与指定设备的连接：本机标记为未连接并通知对端同步断开，清空当前选中设备。
   Future<void> _disconnect(PeerDevice d) async {
     scope.discovery?.markDisconnected(d.id);
     if (_peer?.id == d.id) {
       setState(() => _peer = null);
     }
-    // 通知对端本机已断开，避免对端仍显示「已连接」。
     try {
       if (isSender) {
         final c = SenderClient(address: d.address, port: d.port);
@@ -144,8 +147,6 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
   }
 
-  /// Android 端确保「所有文件访问」权限（读写真实目录依赖）。
-  /// 未授权时提示并引导到系统设置开启，返回是否已就绪。
   Future<bool> _checkFileAccess() async {
     if (!isAndroid) return true;
     final ok = await ensureFileAccess();
@@ -158,9 +159,8 @@ class _HomePageState extends State<HomePage> {
     return ok;
   }
 
-  /// 连接状态提示窗：居中蓝底玻璃、无按钮，短暂显示后自动消失（成功/失败两种）。
-  Future<void> _showConnectResult(PeerDevice d, {required bool ok}) async {
-    await showGlassDialog<Object?>(
+  Future<void> _showConnectResult(PeerDevice d, {required bool ok}) {
+    return showGlassDialog<void>(
       context: context,
       builder: (_) => _ConnectToast(d: d, ok: ok),
     );
@@ -178,7 +178,9 @@ class _HomePageState extends State<HomePage> {
     if (!await _checkFileAccess()) return;
     setState(() => _comparing[m.id] = true);
     try {
-      final plan = isSender ? await _compareAsSender(m, peer) : await _compareAsReceiver(m, peer);
+      final plan = isSender
+          ? await _compareAsSender(m, peer)
+          : await _compareAsReceiver(m, peer);
       if (mounted) setState(() => _plans[m.id] = plan);
       await _showCompareResult(m, plan);
     } catch (e) {
@@ -213,50 +215,54 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _showCompareResult(SyncMapping m, SyncPlan plan) async {
-    final names = plan.newOnly.map((e) => e.relativePath.split('/').last).toList();
-    await showGlassDialog(
+    final names =
+        plan.newOnly.map((e) => e.relativePath.split('/').last).toList();
+    final accepted = await showGlassDialog<bool>(
       context: context,
       builder: (ctx) => GlassDialog(
         title: '对比完成 · ${m.name}',
         maxWidth: 400,
-        content: SizedBox(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '新增 ${names.length} 个文件',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              if (names.isEmpty)
-                const Text('没有新增文件，两端已一致。',
-                    style: TextStyle(color: Color(0xFFc0c0c0)))
-              else ...[
-                ...names
-                    .take(3)
-                    .map((n) => Padding(
-                          padding: const EdgeInsets.only(bottom: 2),
-                          child: Text(
-                            '· $n',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        )),
-                if (names.length > 3)
-                  const Text('…', style: TextStyle(color: Color(0xFFc0c0c0))),
-              ],
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              plan.isEmpty
+                  ? '两端文件一致，无需同步。'
+                  : '新增 ${names.length} 个文件 · ${formatBytes(plan.totalBytes)}',
+              style: const TextStyle(fontSize: 13, height: 1.5),
+            ),
+            if (!plan.isEmpty) ...[
+              const SizedBox(height: 10),
+              for (final n in names.take(3))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text(
+                    '· $n',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: _muted2),
+                  ),
+                ),
+              if (names.length > 3)
+                const Text('…', style: TextStyle(fontSize: 12, color: _muted2)),
             ],
-          ),
+          ],
         ),
         actions: [
-          FilledButton(
-            child: const Text('确定'),
-            onPressed: () => Navigator.pop(ctx),
+          Button(
+            child: const Text('关闭'),
+            onPressed: () => Navigator.pop(ctx, false),
           ),
+          if (!plan.isEmpty)
+            FilledButton(
+              child: const Text('同步'),
+              onPressed: () => Navigator.pop(ctx, true),
+            ),
         ],
       ),
     );
+    if (accepted == true && mounted) await _sync(m);
   }
 
   Future<void> _sync(SyncMapping m) async {
@@ -326,7 +332,6 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (failed != null && failed >= 0) {
-      // 日志已在 runIt（最后一个文件传完时）通过 _persistSyncLog 记录并推送给对端。
       if (failed == 0 && mounted) {
         setState(() {
           _plans[m.id] = SyncPlan(
@@ -344,8 +349,6 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() => _syncing[m.id] = false);
   }
 
-  /// 在最后一个文件传输完成后，立即本地记录本次同步日志并推送给对端，
-  /// 让双方各自留存该次同步任务记录（不依赖同步弹窗是否已点关闭）。
   Future<void> _persistSyncLog({
     required int failed,
     required SyncPlan plan,
@@ -366,9 +369,7 @@ class _HomePageState extends State<HomePage> {
     );
     try {
       await push(mapping.name, successCount, plan.totalBytes, syncedNames);
-    } catch (_) {
-      // 对端离线或推送失败时不影响本端日志记录。
-    }
+    } catch (_) {}
   }
 
   // ---- UI ----
@@ -376,80 +377,158 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final cfg = scope.config.config;
+    final devices = scope.discovery?.devices ?? const <PeerDevice>[];
+    final mappings = cfg.mappings;
+    final running = isSender
+        ? (scope.server?.running ?? false)
+        : (scope.receiverServer?.running ?? false);
+
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 860),
+        constraints: const BoxConstraints(maxWidth: 980),
         child: ListView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
           children: [
-            _sectionTitle('本机'),
-            _card(_deviceCard(cfg.deviceName, cfg.transferPort)),
-            const SizedBox(height: 12),
-            _card(const _LanHint()),
-            const SizedBox(height: 24),
-            _sectionTitle(isSender ? '已发现的接收设备' : '可用的发送设备'),
-            for (final d in scope.discovery?.devices ?? const <PeerDevice>[])
-              _deviceRow(d),
-            const SizedBox(height: 24),
-            _sectionTitle('同步任务'),
-            if (cfg.mappings.isEmpty)
-              const Text('尚未配置映射，请到「映射」页添加。')
-            else if (_peer == null)
-              const Text('请先连接一台设备，再进行对比与同步。')
+            PageHeader(
+              title: '状态',
+              subtitle:
+                  'MySend · ${isSender ? '电脑发送端' : '安卓接收端'} · 局域网单向同步',
+            ),
+            const SizedBox(height: 18),
+            _localCard(
+              cfg.deviceName,
+              cfg.transferPort,
+              mappings.length,
+              running,
+            ),
+            const SizedBox(height: 22),
+            SectionHeader(
+              title: isSender ? '接收设备' : '发送设备',
+              count: '${devices.length} 台',
+            ),
+            const SizedBox(height: 10),
+            if (devices.isEmpty)
+              const _SearchingIndicator()
             else
-              for (final m in cfg.mappings) _mappingRow(m),
+              for (final d in devices) _deviceCard(d),
+            const SizedBox(height: 22),
+            SectionHeader(title: '同步任务', count: '${mappings.length} 组'),
+            const SizedBox(height: 10),
+            if (mappings.isEmpty)
+              const GlassCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('尚未配置同步映射',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                    SizedBox(height: 6),
+                    Text(
+                      '请先在「映射」页添加目录，并在另一端的同名映射中配置对应目录。',
+                      style: TextStyle(
+                          fontSize: 12, height: 1.5, color: _muted2),
+                    ),
+                  ],
+                ),
+              )
+            else
+              GlassCard(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  children: [
+                    for (var i = 0; i < mappings.length; i++) ...[
+                      if (i > 0)
+                        Container(height: 1, color: const Color(0x1FFFFFFF)),
+                      _mappingItem(mappings[i]),
+                    ],
+                  ],
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _sectionTitle(String t) => Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Text(t,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-      );
-
-  Widget _card(Widget child) => GlassCard(child: child);
-
-  Widget _deviceCard(String deviceName, int transferPort) {
-    final running = isSender ? (scope.server?.running ?? false) : (scope.receiverServer?.running ?? false);
-    return Row(
-      children: [
-        Icon(_formIcon(deviceForm), size: 28),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _localCard(String deviceName, int port, int mappingCount, bool running) {
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Text(deviceName,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 4),
-              Text(
-                '${isSender ? '发送端' : '接收端'} · ${_formLabel(deviceForm)}'
-                ' · 端口 $transferPort${running ? ' · 服务运行中' : ''}',
-                style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: _accent.withAlpha(38),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(_formIcon(deviceForm), size: 24, color: _accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      deviceName,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${isSender ? '发送端' : '接收端'} · ${_formLabel(deviceForm)}',
+                      style: const TextStyle(fontSize: 11, color: _muted),
+                    ),
+                  ],
+                ),
+              ),
+              StatusPill(
+                label: running ? '在线' : '未启动',
+                color: running ? _success : _danger,
               ),
             ],
           ),
-        ),
-        Icon(
-          running ? FluentIcons.completed : FluentIcons.warning,
-          size: 20,
-        ),
-      ],
+          const SizedBox(height: 14),
+          InfoRow('服务端口', '$port'),
+          InfoRow('映射数量', '$mappingCount'),
+          InfoRow(
+            '设备标识',
+            scope.config.config.deviceId.length > 8
+                ? scope.config.config.deviceId.substring(0, 8)
+                : scope.config.config.deviceId,
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            '请确保电脑与手机连接同一 Wi-Fi，或让电脑连接手机热点。'
+            '任一端都可以发起对比与同步。',
+            style: TextStyle(fontSize: 12, height: 1.5, color: _muted2),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _deviceRow(PeerDevice d) {
-    final isLinking = _connecting[d.id] ?? false;
+  Widget _deviceCard(PeerDevice d) {
     final connected = d.connected || _peer?.id == d.id;
+    final busy = _connecting[d.id] == true;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: _card(
-        Row(
+      child: GlassCard(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
           children: [
-            Icon(_formIcon(d.form), size: 24),
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: _accent.withAlpha(30),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(_formIcon(d.form), size: 22, color: _accent),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -458,98 +537,141 @@ class _HomePageState extends State<HomePage> {
                   Row(
                     children: [
                       Flexible(
-                        child: Text(d.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        child: Text(
+                          d.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
                       ),
                       if (connected) ...[
                         const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: const Color(0x334A9EFF),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text('已连接',
-                              style: TextStyle(fontSize: 11, color: Color(0xFF4A9EFF))),
-                        ),
+                        const StatusPill(label: '已连接', color: _accent),
                       ],
                     ],
                   ),
-                  Text('${_formLabel(d.form)} · ${d.address}:${d.port}',
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
+                  const SizedBox(height: 3),
+                  Text(
+                    connected ? '可发起对比与同步' : '同一局域网 · 点击连接',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: connected ? _success : _muted,
+                    ),
+                  ),
                 ],
               ),
             ),
-            const SizedBox(width: 12),
-            FilledButton(
-              child: Text(isLinking ? '连接中…' : (connected ? '断开' : '连接')),
-              onPressed: isLinking
-                  ? null
-                  : (connected ? () => _disconnect(d) : () => _connect(d)),
-            ),
+            const SizedBox(width: 8),
+            if (busy)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: ProgressRing(strokeWidth: 2),
+              )
+            else
+              Button(
+                onPressed: () => connected ? _disconnect(d) : _connect(d),
+                child: Text(
+                  connected ? '断开' : '连接',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _mappingRow(SyncMapping m) {
+  Widget _mappingItem(SyncMapping m) {
     final plan = _plans[m.id];
-    final comparing = _comparing[m.id] ?? false;
-    final syncing = _syncing[m.id] ?? false;
+    final comparing = _comparing[m.id] == true;
+    final syncing = _syncing[m.id] == true;
+    final connected = _peer != null;
+    final path = isSender ? m.sourcePath : m.destPath;
 
-    String status;
-    if (syncing) {
+    final String status;
+    final Color statusColor;
+    if (comparing) {
+      status = '对比中…';
+      statusColor = _warning;
+    } else if (syncing) {
       status = '同步中…';
+      statusColor = _warning;
     } else if (plan == null) {
-      status = '未对比';
+      status = connected ? '未对比' : '未连接';
+      statusColor = _muted;
     } else if (plan.isEmpty) {
-      status = '已一致，无需同步';
+      status = '已一致';
+      statusColor = _success;
     } else {
       status = '新增 ${plan.newOnly.length} 个';
+      statusColor = _accent;
     }
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: _card(
-        Row(
-          children: [
-            const Icon(FluentIcons.folder, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                m.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(FluentIcons.folder, size: 18, color: _accent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(m.name, style: const TextStyle(fontSize: 14)),
+                    const SizedBox(height: 2),
+                    Text(
+                      path.isEmpty ? '未填写目录' : path,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: _muted),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Flexible(
-              child: Text(
-                status,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-                style: const TextStyle(fontSize: 12, color: Color(0xFFc0c0c0)),
+              const SizedBox(width: 8),
+              StatusPill(label: status, color: statusColor),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              if (plan != null && !plan.isEmpty)
+                Text(
+                  formatBytes(plan.totalBytes),
+                  style: const TextStyle(fontSize: 11, color: _muted),
+                ),
+              const Spacer(),
+              Button(
+                onPressed: connected && !comparing && !syncing
+                    ? () => _compare(m)
+                    : null,
+                child: Text(
+                  comparing ? '对比中…' : '对比',
+                  style: const TextStyle(fontSize: 12),
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            FilledButton(
-              child: Text(comparing ? '对比中…' : '对比'),
-              onPressed: (comparing || syncing) ? null : () => _compare(m),
-            ),
-            const SizedBox(width: 8),
-            Button(
-              child: Text(syncing ? '同步中…' : '同步'),
-              onPressed: (syncing || plan == null || plan.isEmpty)
-                  ? null
-                  : () => _sync(m),
-            ),
-          ],
-        ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: connected &&
+                        !comparing &&
+                        !syncing &&
+                        plan != null &&
+                        !plan.isEmpty
+                    ? () => _sync(m)
+                    : null,
+                child: Text(
+                  syncing ? '同步中…' : '同步',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -581,37 +703,122 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-String _fmtBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-  if (bytes < 1024 * 1024 * 1024) {
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+/// 搜索设备时的呼吸扩散动画。
+class _SearchingIndicator extends StatefulWidget {
+  const _SearchingIndicator();
+
+  @override
+  State<_SearchingIndicator> createState() => _SearchingIndicatorState();
 }
 
-/// 局域网依赖提示条。
-class _LanHint extends StatelessWidget {
-  const _LanHint();
+class _SearchingIndicatorState extends State<_SearchingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
-      children: [
-        Icon(FluentIcons.wifi, size: 20, color: Color(0xFF4A9EFF)),
-        SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            '应用功能依赖局域网：请确保电脑与手机连接同一 Wi-Fi，或让电脑连接手机热点。',
-            style: TextStyle(fontSize: 13, color: Color(0xFFc0c0c0)),
+    return GlassCard(
+      child: Row(
+        children: [
+          SizedBox(
+            width: 52,
+            height: 52,
+            child: ClipRect(
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) {
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      for (var i = 0; i < 3; i++)
+                        _ring((_controller.value + i / 3) % 1.0),
+                      Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: _accent.withAlpha(38),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(FluentIcons.wifi,
+                            size: 16, color: _accent),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '正在搜索同一局域网内的设备…',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                ),
+                SizedBox(height: 3),
+                Text(
+                  '请确保电脑与手机连接同一 Wi-Fi，或让电脑连接手机热点。',
+                  style:
+                      TextStyle(fontSize: 11, height: 1.4, color: _muted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ring(double t) {
+    return Opacity(
+      opacity: ((1 - t) * 0.5).clamp(0.0, 1.0).toDouble(),
+      child: Transform.scale(
+        scale: 0.55 + t * 0.8,
+        child: Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: _accent, width: 1.2),
           ),
         ),
-      ],
+      ),
     );
   }
 }
 
-/// 同步进度弹窗：进度条 + 文件名 / 数量 / 大小 / 速度，失败原因 / 成功手动关闭。
+class _SyncProgress {
+  final int done;
+  final int total;
+  final int sentBytes;
+  final String currentName;
+
+  const _SyncProgress({
+    this.done = 0,
+    this.total = 0,
+    this.sentBytes = 0,
+    this.currentName = '',
+  });
+}
+
+/// 同步进度弹窗：平滑进度条 + 文件计数 + 当前文件 + 速度，完成后需手动关闭。
 class _SyncDialog extends StatefulWidget {
   final String mappingName;
   final int totalBytes;
@@ -628,25 +835,9 @@ class _SyncDialog extends StatefulWidget {
   State<_SyncDialog> createState() => _SyncDialogState();
 }
 
-/// 同步进度快照，用 [ValueNotifier] 承载，进度更新只重绘进度行，
-/// 避免每次进度都重建整个玻璃弹窗（含 BackdropFilter 模糊），
-/// 从根上消除「进度弹窗高频重绘模糊导致同步卡住」的问题。
-class _SyncProgress {
-  final int done;
-  final int total;
-  final int sentBytes;
-  final String currentName;
-
-  const _SyncProgress({
-    this.done = 0,
-    this.total = 0,
-    this.sentBytes = 0,
-    this.currentName = '',
-  });
-}
-
 class _SyncDialogState extends State<_SyncDialog> {
-  final ValueNotifier<_SyncProgress> _progress = ValueNotifier(const _SyncProgress());
+  final ValueNotifier<_SyncProgress> _progress =
+      ValueNotifier(const _SyncProgress());
   bool _running = true;
   String? _error;
   int _failed = 0;
@@ -679,10 +870,12 @@ class _SyncDialogState extends State<_SyncDialog> {
       });
       if (mounted) setState(() => _running = false);
     } catch (e) {
-      if (mounted) setState(() {
-        _running = false;
-        _error = '$e';
-      });
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _error = '$e';
+        });
+      }
     }
   }
 
@@ -690,92 +883,75 @@ class _SyncDialogState extends State<_SyncDialog> {
   Widget build(BuildContext context) {
     final finished = !_running;
     final err = _error;
+    final title = finished
+        ? (err != null
+            ? '同步失败'
+            : _failed > 0
+                ? '同步完成（部分失败）'
+                : '同步完成')
+        : '同步中 · ${widget.mappingName}';
 
     return GlassDialog(
-      title: finished
-          ? (err != null ? '同步失败' : '同步完成')
-          : '同步中 · ${widget.mappingName}',
+      title: title,
       maxWidth: 400,
       content: SizedBox(
         width: 360,
         child: err != null
-            ? Text('同步失败，请重试。\n$err',
-                style: const TextStyle(fontSize: 13, color: Color(0xFFE9AA7E)))
+            ? Text(
+                '同步失败，请重试。\n$err',
+                style: const TextStyle(fontSize: 13, color: _danger),
+              )
             : ValueListenableBuilder<_SyncProgress>(
                 valueListenable: _progress,
                 builder: (context, p, _) {
-                  final progress = p.total == 0
+                  final fraction = p.total == 0
                       ? 0.0
-                      : (p.done / p.total).clamp(0.0, 1.0);
+                      : (p.done / p.total).clamp(0.0, 1.0).toDouble();
                   final seconds = _watch.elapsedMilliseconds / 1000.0;
-                  final speed = seconds <= 0 ? 0 : (p.sentBytes / seconds);
+                  final speed = seconds <= 0 ? 0.0 : p.sentBytes / seconds;
                   return Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SizedBox(
-                        width: double.infinity,
-                        height: 18,
-                        child: LayoutBuilder(
-                          builder: (context, c) {
-                            return ClipRRect(
-                              borderRadius: BorderRadius.circular(9),
-                              child: Container(
-                                width: c.maxWidth,
-                                height: 18,
-                                color: const Color(0x1AFFFFFF),
-                                alignment: Alignment.centerLeft,
-                                child: TweenAnimationBuilder<double>(
-                                  tween: Tween<double>(end: progress),
-                                  duration: const Duration(milliseconds: 400),
-                                  curve: Curves.easeOutCubic,
-                                  builder: (_, v, __) => Container(
-                                    width: c.maxWidth * v.clamp(0.0, 1.0),
-                                    height: 18,
-                                    decoration: const BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          Color(0xFF4A9EFF),
-                                          Color(0xFF7C5CFF),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                      GlassProgressBar(
+                        value: finished && err == null ? 1.0 : fraction,
+                        height: 16,
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       Text(
-                          '${(progress * 100).toStringAsFixed(0)}%   ${p.done} / ${p.total} 个文件',
-                          style: const TextStyle(
-                              fontSize: 13, color: Color(0xFFe0e0e0))),
-                      if (p.currentName.isNotEmpty && !finished) ...[
+                        '${(fraction * 100).toStringAsFixed(0)}% · '
+                        '${p.done}/${p.total} 个文件',
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                      if (!finished && p.currentName.isNotEmpty) ...[
                         const SizedBox(height: 4),
-                        Text('当前：${p.currentName}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF9a9a9a))),
+                        Text(
+                          '当前：${p.currentName}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11, color: _muted),
+                        ),
                       ],
                       const SizedBox(height: 4),
                       Text(
-                          '已传输 ${_fmtBytes(p.sentBytes)} / ${_fmtBytes(widget.totalBytes)}',
-                          style: const TextStyle(
-                              fontSize: 12, color: Color(0xFF9a9a9a))),
+                        '已传输 ${formatBytes(p.sentBytes)} / '
+                        '${formatBytes(widget.totalBytes)}',
+                        style: const TextStyle(fontSize: 11, color: _muted),
+                      ),
                       if (finished && _failed > 0) ...[
                         const SizedBox(height: 4),
-                        Text('$_failed 个文件失败，请重新对比后重试',
-                            style: const TextStyle(
-                                fontSize: 12, color: Color(0xFFE9AA7E))),
+                        Text(
+                          '$_failed 个文件失败，请重新对比后重试',
+                          style: const TextStyle(fontSize: 11, color: _warning),
+                        ),
                       ],
                       if (!finished && speed > 0) ...[
                         const SizedBox(height: 2),
-                        Text('速度 ${_fmtBytes(speed.round())}/s',
-                            style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF9a9a9a))),
+                        Text(
+                          '速度 ${formatBytes(speed.round())}/s',
+                          style: const TextStyle(fontSize: 11, color: _muted),
+                        ),
                       ],
                     ],
                   );
@@ -793,7 +969,7 @@ class _SyncDialogState extends State<_SyncDialog> {
   }
 }
 
-/// 连接状态自动提示：无按钮，约 1.2 秒后自动关闭。
+/// 连接状态自动提示：无按钮，约 1.3 秒后自动关闭，不显示 IP。
 class _ConnectToast extends StatefulWidget {
   final PeerDevice d;
   final bool ok;
@@ -810,7 +986,7 @@ class _ConnectToastState extends State<_ConnectToast> {
   @override
   void initState() {
     super.initState();
-    _timer = Timer(const Duration(milliseconds: 1200), () {
+    _timer = Timer(const Duration(milliseconds: 1300), () {
       if (mounted) Navigator.pop(context);
     });
   }
@@ -823,28 +999,26 @@ class _ConnectToastState extends State<_ConnectToast> {
 
   @override
   Widget build(BuildContext context) {
-    final ok = widget.ok;
-    final d = widget.d;
+    final color = widget.ok ? _success : _danger;
     return GlassDialog(
-      title: ok ? '已连接' : '连接失败',
-      content: SizedBox(
-        width: 240,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              ok ? '「${d.name}」连接成功' : '「${d.name}」连接失败',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: ok ? null : const Color(0xFFE9AA7E),
-              ),
+      title: widget.ok ? '已连接' : '连接失败',
+      maxWidth: 300,
+      content: Row(
+        children: [
+          Icon(
+            widget.ok ? FluentIcons.check_mark : FluentIcons.error,
+            size: 20,
+            color: color,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '「${widget.d.name}」${widget.ok ? '连接成功' : '连接失败'}',
+              style: const TextStyle(fontSize: 13, height: 1.4),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
-

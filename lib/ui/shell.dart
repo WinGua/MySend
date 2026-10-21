@@ -2,7 +2,6 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:fluent_ui/fluent_ui.dart';
 
-import '../app.dart';
 import '../app_scope.dart';
 import '../core/utils.dart';
 import 'pages/home_page.dart';
@@ -11,7 +10,11 @@ import 'pages/settings_page.dart';
 import 'widgets/glass.dart';
 import 'window_title_bar.dart';
 
-/// 应用导航外壳（Win11 风格侧边栏，手机端自动切换为底部导航）。
+const _accent = Color(0xFF4A9EFF);
+const _muted = Color(0xFF8A8A8A);
+const _muted2 = Color(0xFF9A9A9A);
+
+/// 应用导航外壳：手机使用悬浮底部导航，平板 / 桌面使用侧边栏。
 class Shell extends StatefulWidget {
   const Shell({super.key});
 
@@ -48,7 +51,6 @@ class _ShellState extends State<Shell> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    // 手机（窄屏）没有侧边栏空间，改用底部导航；平板 / 桌面用侧边栏。
     final content = width < 640 ? _buildMobile() : _buildDesktop(width);
     return Stack(
       children: [
@@ -58,7 +60,6 @@ class _ShellState extends State<Shell> {
     );
   }
 
-  /// 手机端：内容区 + 底部导航（状态 / 映射 / 设置）。
   Widget _buildMobile() {
     return Column(
       children: [
@@ -74,18 +75,17 @@ class _ShellState extends State<Shell> {
     );
   }
 
-  /// 平板 / 桌面端：自定义侧边栏（避免 NavigationView 的不透明背景遮住渐变底）。
   Widget _buildDesktop(double width) {
-    //   < 1008 平板竖屏 → compact（仅图标）；  ≥ 1008 → open（图标 + 文字）
     final open = width >= 1008;
     final body = Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildSidebar(open),
-        Expanded(child: IndexedStack(index: _index, children: _pages)),
+        Expanded(
+          child: IndexedStack(index: _index, children: _pages),
+        ),
       ],
     );
-
     if (!isWindows) return body;
     return Column(
       children: [
@@ -95,7 +95,6 @@ class _ShellState extends State<Shell> {
     );
   }
 
-  /// 半透明侧边栏：透出底层渐变，选中项用左侧高亮色块 + 淡蓝底。
   Widget _buildSidebar(bool open) {
     return Container(
       width: open ? 200 : 68,
@@ -103,15 +102,71 @@ class _ShellState extends State<Shell> {
         color: Color(0x2E1B222E),
         border: Border(right: BorderSide(color: Color(0x1FFFFFFF))),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: SafeArea(
+        right: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 18),
+            _brand(open),
+            const SizedBox(height: 18),
+            _sideItem(0, FluentIcons.home, '状态', open),
+            _sideItem(1, FluentIcons.folder, '映射', open),
+            const Spacer(),
+            _sideItem(2, FluentIcons.settings, '设置', open),
+            const SizedBox(height: 14),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _brand(bool open) {
+    if (!open) {
+      return const Center(
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Color(0x2E4A9EFF),
+              borderRadius: BorderRadius.all(Radius.circular(10)),
+            ),
+            child: Icon(FluentIcons.sync, size: 20, color: _accent),
+          ),
+        ),
+      );
+    }
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 18),
+      child: Row(
         children: [
-          const SizedBox(height: 12),
-          _sideItem(0, FluentIcons.home, '状态', open),
-          _sideItem(1, FluentIcons.folder, '映射', open),
-          const Spacer(),
-          _sideItem(2, FluentIcons.settings, '设置', open),
-          const SizedBox(height: 12),
+          SizedBox(
+            width: 34,
+            height: 34,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Color(0x2E4A9EFF),
+                borderRadius: BorderRadius.all(Radius.circular(9)),
+              ),
+              child: Icon(FluentIcons.sync, size: 18, color: _accent),
+            ),
+          ),
+          SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'MySend',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              SizedBox(height: 1),
+              Text(
+                '局域网同步',
+                style: TextStyle(fontSize: 10, color: _muted),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -119,24 +174,20 @@ class _ShellState extends State<Shell> {
 
   Widget _sideItem(int index, IconData icon, String label, bool open) {
     final selected = index == _index;
-    final fg = selected ? const Color(0xFF4A9EFF) : const Color(0xFF9A9A9A);
+    final fg = selected ? _accent : _muted2;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       child: PressableScale(
         onTap: () => setState(() => _index = index),
         child: Container(
-          height: 40,
+          height: 44,
           decoration: BoxDecoration(
             color: selected ? const Color(0x2E4A9EFF) : const Color(0x00000000),
             borderRadius: BorderRadius.circular(8),
-            border: selected
-                ? const Border(
-                    left: BorderSide(color: Color(0xFF4A9EFF), width: 3),
-                  )
-                : null,
           ),
           child: Row(
-            mainAxisAlignment: open ? MainAxisAlignment.start : MainAxisAlignment.center,
+            mainAxisAlignment:
+                open ? MainAxisAlignment.start : MainAxisAlignment.center,
             children: [
               if (open) const SizedBox(width: 12),
               Icon(icon, size: 20, color: fg),
@@ -151,7 +202,6 @@ class _ShellState extends State<Shell> {
     );
   }
 
-  /// 底部导航栏（仅手机端显示）：悬浮毛玻璃胶囊 + 滑动指示器。
   Widget _buildBottomBar() {
     return SafeArea(
       top: false,
@@ -208,7 +258,7 @@ class _ShellState extends State<Shell> {
 
   Widget _buildBottomItem(int index, IconData icon, String label) {
     final selected = index == _index;
-    final color = selected ? const Color(0xFF4A9EFF) : const Color(0xFF8A8A8A);
+    final color = selected ? _accent : _muted;
     return Expanded(
       child: PressableScale(
         onTap: () => setState(() => _index = index),

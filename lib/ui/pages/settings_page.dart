@@ -7,9 +7,13 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app_scope.dart';
 import '../../core/constants.dart';
+import '../../core/utils.dart';
 import '../widgets/glass.dart';
 import 'about_page.dart';
 import 'sync_log_page.dart';
+
+const _accent = Color(0xFF4A9EFF);
+const _muted = Color(0xFF8A8A8A);
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -19,23 +23,16 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  late final TextEditingController _name;
-  late final TextEditingController _port;
   bool _checking = false;
 
   @override
   void initState() {
     super.initState();
-    final cfg = scope.config.config;
-    _name = TextEditingController(text: cfg.deviceName);
-    _port = TextEditingController(text: '${cfg.transferPort}');
     scope.syncLog.addListener(_onLogChanged);
   }
 
   @override
   void dispose() {
-    _name.dispose();
-    _port.dispose();
     scope.syncLog.removeListener(_onLogChanged);
     super.dispose();
   }
@@ -44,14 +41,80 @@ class _SettingsPageState extends State<SettingsPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _save() async {
-    final name = _name.text.trim();
-    if (name.isNotEmpty) scope.config.setDeviceName(name);
-    final port = int.tryParse(_port.text.trim());
-    if (port != null && port > 0 && port < 65536) {
-      scope.config.setTransferPort(port);
+  Future<void> _editDeviceName() async {
+    final ctrl = TextEditingController(text: scope.config.config.deviceName);
+    final name = await showGlassDialog<String>(
+      context: context,
+      builder: (ctx) => GlassDialog(
+        title: '设备名称',
+        maxWidth: 380,
+        content: TextBox(
+          controller: ctrl,
+          placeholder: '例如：我的手机',
+        ),
+        actions: [
+          Button(child: const Text('取消'), onPressed: () => Navigator.pop(ctx)),
+          FilledButton(
+            child: const Text('保存'),
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+          ),
+        ],
+      ),
+    );
+    disposeControllerLater(ctrl);
+    if (name == null || name.isEmpty) return;
+    scope.config.setDeviceName(name);
+    await _restartServices();
+    if (mounted) await _notice('已保存', '设备名称已更新为「$name」。');
+  }
+
+  Future<void> _editPort() async {
+    final ctrl = TextEditingController(
+      text: '${scope.config.config.transferPort}',
+    );
+    final raw = await showGlassDialog<String>(
+      context: context,
+      builder: (ctx) => GlassDialog(
+        title: '服务端口',
+        maxWidth: 380,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextBox(
+              controller: ctrl,
+              placeholder: '53318',
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '默认 53318，范围 1024–65535。修改后会重启局域网服务。',
+              style: TextStyle(fontSize: 12, color: _muted),
+            ),
+          ],
+        ),
+        actions: [
+          Button(child: const Text('取消'), onPressed: () => Navigator.pop(ctx)),
+          FilledButton(
+            child: const Text('保存'),
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+          ),
+        ],
+      ),
+    );
+    disposeControllerLater(ctrl);
+    if (raw == null) return;
+    final port = int.tryParse(raw);
+    if (port == null || port < 1024 || port > 65535) {
+      if (mounted) await _notice('端口无效', '请输入 1024–65535 之间的端口号。');
+      return;
     }
-    await scope.startServices(); // 应用新的名称 / 端口 / 配置
+    scope.config.setTransferPort(port);
+    await _restartServices();
+    if (mounted) await _notice('已保存', '服务端口已切换为 $port。');
+  }
+
+  Future<void> _restartServices() async {
+    await scope.startServices();
     if (mounted) setState(() {});
   }
 
@@ -80,9 +143,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _openUrl(String url) async {
     try {
       await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    } catch (_) {
-      // 无法打开外部浏览器时静默忽略。
-    }
+    } catch (_) {}
   }
 
   Future<void> _checkUpdate() async {
@@ -97,11 +158,12 @@ class _SettingsPageState extends State<SettingsPage> {
           context: context,
           builder: (ctx) => GlassDialog(
             title: '发现新版本',
-            content:
-                Text('最新版本 v$latest，当前版本 v${AppConstants.currentVersion}。'),
+            content: Text(
+              '最新版本 v$latest，当前版本 v${AppConstants.currentVersion}。',
+            ),
             actions: [
               Button(
-                child: const Text('取消'),
+                child: const Text('稍后'),
                 onPressed: () => Navigator.pop(ctx, false),
               ),
               FilledButton(
@@ -113,35 +175,11 @@ class _SettingsPageState extends State<SettingsPage> {
         );
         if (go == true) await _openUrl(AppConstants.releasesUrl);
       } else {
-        await showGlassDialog(
-          context: context,
-          builder: (ctx) => GlassDialog(
-            title: '已是最新版本',
-            content: Text('当前版本 v${AppConstants.currentVersion} 已是最新。'),
-            actions: [
-              FilledButton(
-                child: const Text('知道了'),
-                onPressed: () => Navigator.pop(ctx),
-              ),
-            ],
-          ),
-        );
+        await _notice('已是最新版本',
+            '当前版本 v${AppConstants.currentVersion} 已是最新。');
       }
     } catch (_) {
-      if (!mounted) return;
-      await showGlassDialog(
-        context: context,
-        builder: (ctx) => GlassDialog(
-          title: '检查失败',
-          content: const Text('无法连接 GitHub，请检查网络后重试。'),
-          actions: [
-            FilledButton(
-              child: const Text('知道了'),
-              onPressed: () => Navigator.pop(ctx),
-            ),
-          ],
-        ),
-      );
+      if (mounted) await _notice('检查更新失败', '无法连接 GitHub，请检查网络后重试。');
     } finally {
       if (mounted) setState(() => _checking = false);
     }
@@ -159,7 +197,8 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       final text = await res.transform(utf8.decoder).join();
       final j = jsonDecode(text) as Map<String, dynamic>;
-      final tag = (j['tag_name'] as String? ?? '').replaceFirst(RegExp(r'^v'), '');
+      final tag = (j['tag_name'] as String? ?? '')
+          .replaceFirst(RegExp(r'^[vV]'), '');
       if (tag.isEmpty) throw const FormatException('tag_name 为空');
       return tag;
     } finally {
@@ -179,67 +218,162 @@ class _SettingsPageState extends State<SettingsPage> {
     return 0;
   }
 
+  Future<void> _notice(String title, String text) {
+    return showGlassDialog<void>(
+      context: context,
+      builder: (ctx) => GlassDialog(
+        title: title,
+        maxWidth: 340,
+        content: Text(text, style: const TextStyle(fontSize: 13, height: 1.4)),
+        actions: [
+          FilledButton(
+            child: const Text('知道了'),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final cfg = scope.config.config;
     final logs = scope.syncLog.entries;
+    final logSubtitle = logs.isEmpty
+        ? '暂无同步记录'
+        : '最近：${logs.first.mappingName} · '
+            '${_fmtTime(logs.first.time)} · '
+            '${logs.first.fileCount} 个文件';
+
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 860),
+        constraints: const BoxConstraints(maxWidth: 980),
         child: ListView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
           children: [
-            const Text('设置',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 16),
-            const Text('设备名称'),
-            const SizedBox(height: 4),
-            TextBox(controller: _name, placeholder: '例如：客厅电脑'),
-            const SizedBox(height: 16),
-            const Text('传输端口'),
-            const SizedBox(height: 4),
-            TextBox(controller: _port, placeholder: '53318'),
-            const SizedBox(height: 24),
-            FilledButton(child: const Text('保存并重启服务'), onPressed: _save),
-            const SizedBox(height: 32),
-            const Text('同步日志',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Button(
-                child: const Text('查看同步日志'),
-                onPressed: _openLog,
+            const PageHeader(
+              title: '设置',
+              subtitle: '设备信息、同步日志与应用更新',
+            ),
+            const SizedBox(height: 18),
+            GlassCard(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                children: [
+                  _tile(
+                    icon: FluentIcons.rename,
+                    title: '设备名称',
+                    subtitle: cfg.deviceName,
+                    onTap: _editDeviceName,
+                  ),
+                  _divider(),
+                  _tile(
+                    icon: FluentIcons.plug_connected,
+                    title: '服务端口',
+                    subtitle: '${cfg.transferPort}',
+                    onTap: _editPort,
+                  ),
+                  _divider(),
+                  _tile(
+                    icon: FluentIcons.history,
+                    title: '同步日志',
+                    subtitle: logSubtitle,
+                    onTap: _openLog,
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              logs.isEmpty
-                  ? '暂无同步记录。'
-                  : '最近一条：${logs.first.mappingName} · ${_fmtTime(logs.first.time)}'
-                      ' · ${logs.first.fileCount} 个文件 · ${_fmtBytes(logs.first.totalBytes)}',
-              style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a)),
-            ),
-            const SizedBox(height: 32),
-            const Text('更多',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
-            Button(
-              child: const Text('关于 MySend'),
-              onPressed: _openAbout,
+            GlassCard(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                children: [
+                  _tile(
+                    icon: FluentIcons.info,
+                    title: '关于',
+                    subtitle: 'MySend ${AppConstants.currentVersion}',
+                    onTap: _openAbout,
+                  ),
+                  _divider(),
+                  _tile(
+                    icon: FluentIcons.globe,
+                    title: 'GitHub 仓库',
+                    subtitle: 'WinGua/MySend',
+                    onTap: _openRepo,
+                  ),
+                  _divider(),
+                  _tile(
+                    icon: FluentIcons.sync,
+                    title: '检查更新',
+                    subtitle: _checking
+                        ? '正在检查…'
+                        : '与 GitHub Releases 比对版本',
+                    trailing: _checking
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: ProgressRing(strokeWidth: 2),
+                          )
+                        : null,
+                    onTap: _checking ? null : _checkUpdate,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Button(
-              child: const Text('GitHub 仓库'),
-              onPressed: _openRepo,
+            const SizedBox(height: 18),
+            const Center(
+              child: Text(
+                'MySend v${AppConstants.currentVersion} · Built by Winter with DeepSeek',
+                style: TextStyle(fontSize: 11, color: Color(0xFF6F6F6F)),
+              ),
             ),
-            const SizedBox(height: 8),
-            Button(
-              child: Text(_checking ? '检查中…' : '检查更新'),
-              onPressed: _checking ? null : _checkUpdate,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _divider() => Container(
+        height: 1,
+        margin: const EdgeInsets.symmetric(horizontal: 14),
+        color: const Color(0x14FFFFFF),
+      );
+
+  Widget _tile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    VoidCallback? onTap,
+    Widget? trailing,
+  }) {
+    return PressableScale(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: _accent),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontSize: 14)),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 11, color: _muted),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            Text('当前版本 v${AppConstants.currentVersion}',
-                style: const TextStyle(fontSize: 12, color: Color(0xFF9a9a9a))),
+            if (trailing != null)
+              trailing
+            else
+              const Icon(FluentIcons.chevron_right,
+                  size: 12, color: Color(0xFF6F6F6F)),
           ],
         ),
       ),
@@ -248,15 +382,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   static String _fmtTime(DateTime t) {
     String pad(int n) => n.toString().padLeft(2, '0');
-    return '${t.month.toString().padLeft(2, '0')}-${pad(t.day)} ${pad(t.hour)}:${pad(t.minute)}';
-  }
-
-  static String _fmtBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    return '${pad(t.month)}-${pad(t.day)} ${pad(t.hour)}:${pad(t.minute)}';
   }
 }

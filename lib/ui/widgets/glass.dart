@@ -220,6 +220,198 @@ class GlassDialog extends StatelessWidget {
   }
 }
 
+/// 页面标题区：大标题 + 一行说明，可带右侧操作。
+class PageHeader extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+
+  const PageHeader({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 24,
+                  height: 1.2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.5,
+                  color: Color(0xFF8A8A8A),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (trailing != null) ...[
+          const SizedBox(width: 12),
+          trailing!,
+        ],
+      ],
+    );
+  }
+}
+
+/// 分区标题：标题 + 数量 + 右侧操作。
+class SectionHeader extends StatelessWidget {
+  final String title;
+  final String? count;
+  final Widget? trailing;
+
+  const SectionHeader({
+    super.key,
+    required this.title,
+    this.count,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        if (count != null) ...[
+          const SizedBox(width: 8),
+          Text(
+            count!,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF8A8A8A)),
+          ),
+        ],
+        const Spacer(),
+        if (trailing != null) trailing!,
+      ],
+    );
+  }
+}
+
+/// 小型状态胶囊。
+class StatusPill extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const StatusPill({super.key, required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(38),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 11, color: color),
+      ),
+    );
+  }
+}
+
+/// 信息行：左标签 + 右值。
+class InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const InfoRow({super.key, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 76,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF8A8A8A)),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 带平滑过渡的胶囊进度条。
+class GlassProgressBar extends StatelessWidget {
+  final double value;
+  final double height;
+
+  const GlassProgressBar({
+    super.key,
+    required this.value,
+    this.height = 16,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: value.clamp(0.0, 1.0).toDouble()),
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeOutCubic,
+      builder: (context, v, _) {
+        return SizedBox(
+          height: height,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(height / 2),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Container(color: const Color(0x1AFFFFFF)),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    heightFactor: 1,
+                    widthFactor: v.clamp(0.0, 1.0).toDouble(),
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Color(0xFF4A9EFF), Color(0xFF7C5CFF)],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// 统一的玻璃弹窗入口：内置入场（缩放+淡入）与出场（缩放+淡出）动画，
 /// 用 [material.showGeneralDialog] 借助正反向过渡实现，取代无出场动画的 `showDialog`。
 Future<T?> showGlassDialog<T>({
