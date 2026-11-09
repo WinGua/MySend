@@ -72,7 +72,12 @@ class UpdateService {
   }
 
   static List<int> _parts(String version) {
-    final cleaned = version.split(RegExp(r'[-+]')).first.trim();
+    final cleaned = version
+        .trim()
+        .replaceFirst(RegExp(r'^[vV]'), '')
+        .split(RegExp(r'[-+]'))
+        .first
+        .trim();
     return cleaned.split('.').map((s) => int.tryParse(s) ?? 0).toList();
   }
 
