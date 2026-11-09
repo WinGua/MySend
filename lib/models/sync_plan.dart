@@ -1,24 +1,34 @@
 import 'file_entry.dart';
 
-/// 一次同步的差异计算结果。
+/// 一次双向对比的差异计算结果。
+///
+/// 以「本机」视角命名：
+/// - [toPush]：本机有、对端没有 → 本机发出
+/// - [toPull]：对端有、本机没有 → 本机接收
+/// - [skippedCount]：两端都存在 → 跳过，不比对内容、不覆盖、不删除
 class SyncPlan {
   final String mappingId;
   final String mappingName;
 
-  /// 需要从发送端下载的新增文件（接收端不存在的相对路径）。
-  final List<FileEntry> toSend;
-
-  /// 语义别名，与 [toSend] 一致（仅「新增」）。
-  final List<FileEntry> newOnly;
+  final List<FileEntry> toPush;
+  final List<FileEntry> toPull;
+  final int skippedCount;
 
   const SyncPlan({
     required this.mappingId,
     required this.mappingName,
-    required this.toSend,
-    required this.newOnly,
+    required this.toPush,
+    required this.toPull,
+    required this.skippedCount,
   });
 
-  int get totalBytes => toSend.fold(0, (sum, e) => sum + e.size);
+  int get pushBytes => toPush.fold(0, (sum, e) => sum + e.size);
 
-  bool get isEmpty => toSend.isEmpty;
+  int get pullBytes => toPull.fold(0, (sum, e) => sum + e.size);
+
+  int get totalCount => toPush.length + toPull.length;
+
+  int get totalBytes => pushBytes + pullBytes;
+
+  bool get isEmpty => toPush.isEmpty && toPull.isEmpty;
 }

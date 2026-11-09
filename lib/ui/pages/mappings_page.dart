@@ -59,7 +59,7 @@ class _MappingsPageState extends State<MappingsPage> {
       context: context,
       builder: (ctx) => GlassDialog(
         title: '删除映射',
-        content: Text('确定删除「${m.name}」吗？手机上的文件不会被删除。'),
+        content: Text('确定删除「${m.name}」吗？对端文件不会被删除。'),
         actions: [
           Button(
             child: const Text('取消'),
@@ -86,9 +86,7 @@ class _MappingsPageState extends State<MappingsPage> {
           children: [
             AppPageHeader(
               title: '映射',
-              subtitle: isSender
-                  ? '为每组同步任务选择电脑上的源目录；手机端配置同名映射的目标目录。'
-                  : '为每组同步任务选择手机上的目标目录；电脑端配置同名映射的源目录。',
+              subtitle: '为每组同步任务选择本机目录；对端配置同名映射即可双向互补新增。',
               trailing: FilledButton(
                 onPressed: () => _openEditor(),
                 child: const Row(
@@ -138,8 +136,8 @@ class _MappingsPageState extends State<MappingsPage> {
   }
 
   Widget _mappingCard(SyncMapping m) {
-    final path = isSender ? m.sourcePath : m.destPath;
-    final roleLabel = isSender ? '源目录' : '目标目录';
+    final path = m.localRoot(isSender);
+    const roleLabel = '本机目录';
     return GlassCard(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -174,15 +172,6 @@ class _MappingsPageState extends State<MappingsPage> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12, height: 1.5, color: _muted),
           ),
-          if (isSender && m.destPath.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
-              '手机目标目录：${m.destPath}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: _muted),
-            ),
-          ],
         ],
       ),
     );
@@ -283,11 +272,11 @@ class _MappingEditorState extends State<_MappingEditor> {
       return;
     }
     if (isSender && source.isEmpty) {
-      setState(() => _error = '请选择电脑上的源目录。');
+      setState(() => _error = '请选择电脑上的本机目录。');
       return;
     }
     if (!isSender && dest.isEmpty) {
-      setState(() => _error = '请选择手机上的目标目录。');
+      setState(() => _error = '请选择手机上的本机目录。');
       return;
     }
     widget.onSaved(
@@ -317,72 +306,38 @@ class _MappingEditorState extends State<_MappingEditor> {
             placeholder: '例如：音乐',
           ),
           const SizedBox(height: 14),
-          if (isSender) ...[
-            const Text('源目录（电脑）',
-                style: TextStyle(fontSize: 12, color: _muted)),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: TextBox(
-                    controller: _source,
-                    placeholder: '选择电脑上的文件夹',
-                    readOnly: true,
-                  ),
+          const Text('本机目录',
+              style: TextStyle(fontSize: 12, color: _muted)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: TextBox(
+                  controller: isSender ? _source : _dest,
+                  placeholder: isSender ? '选择电脑上的文件夹' : '选择手机上的文件夹',
+                  readOnly: true,
                 ),
-                const SizedBox(width: 8),
-                Button(
-                  onPressed: _picking ? null : _pickSource,
-                  child: _picking
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: ProgressRing(strokeWidth: 2),
-                        )
-                      : const Text('选择', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const Text('目标目录（手机，可留空）',
-                style: TextStyle(fontSize: 12, color: _muted)),
-            const SizedBox(height: 6),
-            TextBox(
-              controller: _dest,
-              placeholder: '在手机端配置即可',
-            ),
-          ] else ...[
-            const Text('目标目录（手机）',
-                style: TextStyle(fontSize: 12, color: _muted)),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: TextBox(
-                    controller: _dest,
-                    placeholder: '点击右侧按钮选择',
-                    readOnly: true,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Button(
-                  onPressed: _picking ? null : _pickDest,
-                  child: _picking
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: ProgressRing(strokeWidth: 2),
-                        )
-                      : const Text('选择', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '首次选择目录会请求「所有文件访问」权限，授权后即可写入真实路径。',
-              style: TextStyle(fontSize: 11, height: 1.5, color: _muted),
-            ),
-          ],
+              ),
+              const SizedBox(width: 8),
+              Button(
+                onPressed: _picking ? null : (isSender ? _pickSource : _pickDest),
+                child: _picking
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: ProgressRing(strokeWidth: 2),
+                      )
+                    : const Text('选择', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isSender
+                ? '对端在手机上创建同名映射并选择目录，即可双向互补新增。'
+                : '首次选择目录会请求「所有文件访问」权限，授权后即可写入真实路径。',
+            style: const TextStyle(fontSize: 11, height: 1.5, color: _muted),
+          ),
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(

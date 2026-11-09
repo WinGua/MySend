@@ -110,6 +110,130 @@ void writeError(
   );
 }
 
+/// 一次同步任务的日志报告，统一描述「本机发出 / 本机接收」。
+///
+/// 线上报文同时携带旧版的合计字段，保证旧版本对端仍能读取。
+class SyncLogReport {
+  final String mappingName;
+  final String peerName;
+  final DateTime time;
+
+  final int sentCount;
+  final int sentBytes;
+  final List<String> sentFiles;
+
+  final int receivedCount;
+  final int receivedBytes;
+  final List<String> receivedFiles;
+
+  /// 报文是否携带方向信息；旧版对端只有合计字段。
+  final bool directional;
+
+  const SyncLogReport({
+    required this.mappingName,
+    required this.peerName,
+    required this.time,
+    this.sentCount = 0,
+    this.sentBytes = 0,
+    this.sentFiles = const [],
+    this.receivedCount = 0,
+    this.receivedBytes = 0,
+    this.receivedFiles = const [],
+    this.directional = true,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'name': mappingName,
+        'peer': peerName,
+        'time': time.millisecondsSinceEpoch,
+        'sent': {'c': sentCount, 'b': sentBytes, 'f': sentFiles},
+        'recv': {'c': receivedCount, 'b': receivedBytes, 'f': receivedFiles},
+        // 旧版对端只认识合计字段。
+        'count': sentCount + receivedCount,
+        'bytes': sentBytes + receivedBytes,
+        'files': [...sentFiles, ...receivedFiles],
+      };
+
+  /// 从对端日志报文解析。旧报文没有方向字段时按「本机接收」归档。
+  factory SyncLogReport.fromJson(Map<String, dynamic> j) {
+    final sent = _bucket(j['sent']);
+    final recv = _bucket(j['recv']);
+    final name = j['name'] as String? ?? '';
+    final peer = j['peer'] as String? ?? '';
+    final time = DateTime.fromMillisecondsSinceEpoch(
+      (j['time'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
+    );
+
+    if (sent != null || recv != null) {
+      return SyncLogReport(
+        mappingName: name,
+        peerName: peer,
+        time: time,
+        sentCount: sent?.count ?? 0,
+        sentBytes: sent?.bytes ?? 0,
+        sentFiles: sent?.files ?? const [],
+        receivedCount: recv?.count ?? 0,
+        receivedBytes: recv?.bytes ?? 0,
+        receivedFiles: recv?.files ?? const [],
+      );
+    }
+
+    final files = (j['files'] as List<dynamic>? ?? const [])
+        .map((e) => e.toString())
+        .toList();
+    return SyncLogReport(
+      mappingName: name,
+      peerName: peer,
+      time: time,
+      receivedCount: (j['count'] as num?)?.toInt() ?? files.length,
+      receivedBytes: (j['bytes'] as num?)?.toInt() ?? 0,
+      receivedFiles: files,
+      directional: false,
+    );
+  }
+
+  /// 站到对端视角：我发出的变成对方接收的，反之亦然。
+  SyncLogReport mirrored() {
+    if (!directional) return this;
+    return SyncLogReport(
+      mappingName: mappingName,
+      peerName: peerName,
+      time: time,
+      sentCount: receivedCount,
+      sentBytes: receivedBytes,
+      sentFiles: receivedFiles,
+      receivedCount: sentCount,
+      receivedBytes: sentBytes,
+      receivedFiles: sentFiles,
+    );
+  }
+
+  static _LogBucket? _bucket(dynamic raw) {
+    if (raw is! Map) return null;
+    final map = Map<String, dynamic>.from(raw);
+    final files = (map['f'] as List<dynamic>? ?? const [])
+        .map((e) => e.toString())
+        .toList();
+    return _LogBucket(
+      count: (map['c'] as num?)?.toInt() ?? files.length,
+      bytes: (map['b'] as num?)?.toInt() ?? 0,
+      files: files,
+    );
+  }
+}
+
+class _LogBucket {
+  final int count;
+  final int bytes;
+  final List<String> files;
+
+  const _LogBucket({
+    required this.count,
+    required this.bytes,
+    required this.files,
+  });
+}
+
 /// 读取 JSON 对象请求体；超过上限或非法时返回 null。
 Future<Map<String, dynamic>?> readJsonObject(
   HttpRequest req, {

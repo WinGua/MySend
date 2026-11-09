@@ -3,11 +3,10 @@ import 'package:flutter/foundation.dart';
 import 'core/utils.dart';
 import 'models/device_info.dart';
 import 'services/discovery_service.dart';
+import 'services/transfer/local_transfer_server.dart';
 import 'services/transfer/part_store.dart';
 import 'services/transfer/peer_client.dart';
 import 'services/transfer/protocol.dart';
-import 'services/transfer/receiver_server.dart';
-import 'services/transfer/sender_server.dart';
 import 'storage/config_repository.dart';
 import 'storage/sync_log_repository.dart';
 
@@ -25,8 +24,9 @@ class AppScope extends ChangeNotifier {
   final Map<String, String> _peerTokens = {};
 
   DiscoveryService? discovery;
-  SenderServer? server; // 发送端（PC）HTTP 服务
-  ReceiverServer? receiverServer; // 接收端（Android）HTTP 服务
+
+  /// 两端统一的 HTTP 服务：同时具备发送与接收能力。
+  LocalTransferServer? server;
 
   AppScope() {
     syncLog.load();
@@ -34,14 +34,11 @@ class AppScope extends ChangeNotifier {
 
   String get role => isSender ? 'pc' : 'android';
 
-  /// 当前角色对应的本机 HTTP 服务。
-  TransferServer? get transferServer => isSender ? server : receiverServer;
+  /// 当前本机 HTTP 服务。
+  TransferServer? get transferServer => server;
 
   /// 当前 HTTP 服务实际监听端口（首选端口被占用时会由系统分配）。
-  int get localPort {
-    if (isSender) return server?.port ?? config.config.transferPort;
-    return receiverServer?.port ?? config.config.transferPort;
-  }
+  int get localPort => server?.port ?? config.config.transferPort;
 
   /// 为该对端创建协议客户端，自动携带会话 token。
   PeerClient clientFor(PeerDevice d) => PeerClient(
@@ -60,9 +57,7 @@ class AppScope extends ChangeNotifier {
     final client = clientFor(d);
     try {
       // 附带本机签发给对端的 token，让对端在配对后也能反向调用本机。
-      final ownToken = isSender
-          ? (server?.issueTokenFor(d.id) ?? '')
-          : (receiverServer?.issueTokenFor(d.id) ?? '');
+      final ownToken = server?.issueTokenFor(d.id) ?? '';
       final outcome = await client.pair(tokenToOffer: ownToken);
       _peerTokens[d.id] = outcome.token;
       final linked = d.copyWith(
@@ -100,40 +95,27 @@ class AppScope extends ChangeNotifier {
     final cfg = config.config;
 
     // 先启动 HTTP 服务，确保发现报文携带的是实际监听端口。
-    if (isSender) {
-      server = SenderServer(
-        preferredPort: cfg.transferPort,
-        config: config,
-        session: session,
-        onPeerPaired: _onPeerPaired,
-        onSyncLog: _onSyncLog,
-        onDisconnect: _onDisconnect,
-      );
-      try {
-        await server!.start();
-      } catch (e) {
-        debugPrint('[MySend] 发送服务启动失败: $e');
-      }
-    } else {
-      receiverServer = ReceiverServer(
-        preferredPort: cfg.transferPort,
-        config: config,
-        deviceId: cfg.deviceId,
-        deviceName: cfg.deviceName,
-        session: session,
-        onPeerPaired: _onPeerPaired,
-        onSyncLog: _onSyncLog,
-        onDisconnect: _onDisconnect,
-      );
-      try {
-        await receiverServer!.start();
-      } catch (e) {
-        debugPrint('[MySend] 接收服务启动失败: $e');
-      }
-      for (final m in cfg.mappings) {
-        if (m.destPath.isNotEmpty) {
-          await PartStore.cleanup(m.destPath);
-        }
+    final local = LocalTransferServer(
+      preferredPort: cfg.transferPort,
+      config: config,
+      isSender: isSender,
+      session: session,
+      onPeerPaired: _onPeerPaired,
+      onSyncLog: _onSyncLog,
+      onDisconnect: _onDisconnect,
+    );
+    server = local;
+    try {
+      await local.start();
+    } catch (e) {
+      debugPrint('[MySend] 同步服务启动失败: $e');
+    }
+
+    // 两端都可能接收文件，启动时都清理各自映射根下的过期分片。
+    for (final m in cfg.mappings) {
+      final root = m.localRoot(isSender);
+      if (root.isNotEmpty) {
+        await PartStore.cleanup(root);
       }
     }
 
@@ -170,12 +152,17 @@ class AppScope extends ChangeNotifier {
   }
 
   /// 接收对端推送的同步日志并记录，实现同步双方各自留存日志。
-  Future<void> _onSyncLog(String name, int count, int bytes, List<String> files) {
+  Future<void> _onSyncLog(SyncLogReport report) {
     return syncLog.add(
-      name: name,
-      fileCount: count,
-      totalBytes: bytes,
-      files: files,
+      name: report.mappingName,
+      time: report.time,
+      peerName: report.peerName,
+      sentCount: report.sentCount,
+      sentBytes: report.sentBytes,
+      sentFiles: report.sentFiles,
+      receivedCount: report.receivedCount,
+      receivedBytes: report.receivedBytes,
+      receivedFiles: report.receivedFiles,
     );
   }
 
@@ -193,10 +180,8 @@ class AppScope extends ChangeNotifier {
     discovery?.removeListener(notifyListeners);
     await discovery?.stop();
     await server?.stop();
-    await receiverServer?.stop();
     discovery = null;
     server = null;
-    receiverServer = null;
     _peerTokens.clear();
   }
 }

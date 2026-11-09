@@ -19,6 +19,7 @@ import '../../models/sync_plan.dart';
 import '../../platform/permissions.dart';
 import '../../services/local_index_service.dart';
 import '../../services/sync_engine.dart';
+import '../../services/transfer/protocol.dart';
 import '../widgets/glass.dart';
 
 const _accent = Color(0xFF4A9EFF);
@@ -157,16 +158,18 @@ class _HomePageState extends State<HomePage> {
   Future<void> _compare(SyncMapping m) async {
     final peer = _peer;
     if (peer == null) {
-      _toast(isSender ? '请先连接一台接收设备' : '请先连接一台发送设备');
+      _toast('请先连接一台设备');
       return;
     }
     if (_comparing[m.id] == true) return;
+    if (m.localRoot(isSender).isEmpty) {
+      _toast('「${m.name}」尚未选择本机目录，请先在映射页设置');
+      return;
+    }
     if (!await _checkFileAccess()) return;
     setState(() => _comparing[m.id] = true);
     try {
-      final plan = isSender
-          ? await _compareAsSender(m, peer)
-          : await _compareAsReceiver(m, peer);
+      final plan = await _compareWith(m, peer);
       if (mounted) setState(() => _plans[m.id] = plan);
       await _showCompareResult(m, plan);
     } catch (e) {
@@ -176,38 +179,33 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<SyncPlan> _compareAsSender(SyncMapping m, PeerDevice peer) async {
+  /// 同时扫描本机与对端，计算双向新增文件。
+  Future<SyncPlan> _compareWith(SyncMapping m, PeerDevice peer) async {
     final client = scope.clientFor(peer);
     try {
-      final dest = await client.fetchIndex(m.name);
-      final destMap = {for (final e in dest) e.relativePath: e};
-      final srcMap = await LocalIndexService.scan(m.sourcePath);
-      return SyncEngine.computePlan(mapping: m, source: srcMap, dest: destMap);
-    } finally {
-      client.close();
-    }
-  }
-
-  Future<SyncPlan> _compareAsReceiver(SyncMapping m, PeerDevice peer) async {
-    final client = scope.clientFor(peer);
-    try {
-      final src = await client.fetchIndex(m.name);
-      final srcMap = {for (final e in src) e.relativePath: e};
-      final destMap = await LocalIndexService.scan(m.destPath);
-      return SyncEngine.computePlan(mapping: m, source: srcMap, dest: destMap);
+      final remote = await client.fetchIndex(m.name);
+      final remoteMap = {for (final e in remote) e.relativePath: e};
+      final localMap = await LocalIndexService.scan(m.localRoot(isSender));
+      return SyncEngine.computeBidirectionalPlan(
+        mapping: m,
+        local: localMap,
+        remote: remoteMap,
+      );
     } finally {
       client.close();
     }
   }
 
   Future<void> _showCompareResult(SyncMapping m, SyncPlan plan) async {
-    final names =
-        plan.newOnly.map((e) => e.relativePath.split('/').last).toList();
+    final sentNames =
+        plan.toPush.map((e) => e.relativePath.split('/').last).toList();
+    final receivedNames =
+        plan.toPull.map((e) => e.relativePath.split('/').last).toList();
     final accepted = await showGlassDialog<bool>(
       context: context,
       builder: (ctx) => GlassDialog(
         title: '对比完成 · ${m.name}',
-        maxWidth: 400,
+        maxWidth: 420,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -215,23 +213,25 @@ class _HomePageState extends State<HomePage> {
             Text(
               plan.isEmpty
                   ? '两端文件一致，无需同步。'
-                  : '新增 ${names.length} 个文件 · ${formatBytes(plan.totalBytes)}',
+                  : '共 ${plan.totalCount} 个新增文件 · '
+                      '${formatBytes(plan.totalBytes)}',
               style: const TextStyle(fontSize: 13, height: 1.5),
             ),
-            if (!plan.isEmpty) ...[
+            if (plan.toPush.isNotEmpty) ...[
               const SizedBox(height: 10),
-              for (final n in names.take(3))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Text(
-                    '· $n',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: _muted2),
-                  ),
-                ),
-              if (names.length > 3)
-                const Text('…', style: TextStyle(fontSize: 12, color: _muted2)),
+              _planGroup(
+                '将发送 ${plan.toPush.length} 个 · '
+                '${formatBytes(plan.pushBytes)}',
+                sentNames,
+              ),
+            ],
+            if (plan.toPull.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _planGroup(
+                '将接收 ${plan.toPull.length} 个 · '
+                '${formatBytes(plan.pullBytes)}',
+                receivedNames,
+              ),
             ],
           ],
         ),
@@ -251,13 +251,41 @@ class _HomePageState extends State<HomePage> {
     if (accepted == true && mounted) await _sync(m);
   }
 
+  Widget _planGroup(String title, List<String> names) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 4),
+        for (final n in names.take(3))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              '· $n',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, color: _muted2),
+            ),
+          ),
+        if (names.length > 3)
+          const Text('…', style: TextStyle(fontSize: 12, color: _muted2)),
+      ],
+    );
+  }
+
   Future<void> _sync(SyncMapping m) async {
     final peer = _peer;
     final plan = _plans[m.id];
-    if (peer == null || plan == null || plan.isEmpty || (_syncing[m.id] ?? false)) {
+    if (peer == null ||
+        plan == null ||
+        plan.isEmpty ||
+        (_syncing[m.id] ?? false)) {
       return;
     }
-    // 同一时刻只允许一个同步任务，避免两端并发写入互相干扰。
+    // 同一时刻只允许一个同步任务，避免并发写入互相干扰。
     if (_syncing.values.any((v) => v)) {
       _toast('已有同步任务在进行，请等待完成');
       return;
@@ -267,54 +295,53 @@ class _HomePageState extends State<HomePage> {
 
     // 记录成功文件与失败原因，供日志和结果弹窗使用。
     final failures = <String>[];
-    final syncedNames = <String>[];
-    var syncedBytes = 0;
+    final sentNames = <String>[];
+    final receivedNames = <String>[];
+    var sentBytes = 0;
+    var receivedBytes = 0;
 
-    Future<int> runIt(
-        void Function(int done, int total, FileEntry current) onProgress) async {
+    Future<SyncResult> runIt(
+      void Function(int done, int total, FileEntry current, SyncDirection dir)
+          onProgress,
+    ) async {
       final client = scope.clientFor(peer);
       final localServer = scope.transferServer;
       localServer?.busy = true;
       try {
-        void onDone(int done, int total, FileEntry current) {
-          syncedNames.add(current.relativePath.split('/').last);
-          syncedBytes += current.size;
-          onProgress(done, total, current);
-        }
-
-        void onFailure(FileEntry entry, Object error) {
-          if (failures.length < 20) {
-            failures.add('${entry.relativePath}：$error');
-          }
-        }
-
-        final failed = isSender
-            ? await SyncEngine.push(
-                mapping: m,
-                client: client,
-                files: plan.toSend,
-                onProgress: onDone,
-                onFailure: onFailure,
-              )
-            : await SyncEngine.run(
-                mapping: m,
-                client: client,
-                files: plan.toSend,
-                onProgress: onDone,
-                onFailure: onFailure,
+        final result = await SyncEngine.runBidirectional(
+          mapping: m,
+          client: client,
+          plan: plan,
+          localRoot: m.localRoot(isSender),
+          onProgress: (done, total, current, direction) {
+            if (direction == SyncDirection.push) {
+              sentNames.add(current.relativePath.split('/').last);
+              sentBytes += current.size;
+            } else {
+              receivedNames.add(current.relativePath.split('/').last);
+              receivedBytes += current.size;
+            }
+            onProgress(done, total, current, direction);
+          },
+          onFailure: (entry, direction, error) {
+            if (failures.length < 20) {
+              failures.add(
+                '${direction == SyncDirection.push ? '发送' : '接收'} '
+                '${entry.relativePath}：$error',
               );
-        await _persistSyncLog(
-          name: m.name,
-          syncedNames: syncedNames,
-          syncedBytes: syncedBytes,
-          push: (name, count, bytes, files) => client.sendLog(
-            name: name,
-            fileCount: count,
-            totalBytes: bytes,
-            files: files,
-          ),
+            }
+          },
         );
-        return failed;
+        await _persistSyncLog(
+          peerName: peer.name,
+          mappingName: m.name,
+          sentNames: sentNames,
+          sentBytes: sentBytes,
+          receivedNames: receivedNames,
+          receivedBytes: receivedBytes,
+          push: client.sendLog,
+        );
+        return result;
       } finally {
         localServer?.busy = false;
         client.close();
@@ -326,12 +353,11 @@ class _HomePageState extends State<HomePage> {
         await WakelockPlus.enable();
       } catch (_) {}
     }
-    final failed = await showGlassDialog<int>(
+    final result = await showGlassDialog<SyncResult>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _SyncDialog(
         mappingName: m.name,
-        totalBytes: plan.totalBytes,
         failures: failures,
         run: runIt,
       ),
@@ -342,18 +368,21 @@ class _HomePageState extends State<HomePage> {
       } catch (_) {}
     }
 
-    if (failed != null && failed >= 0) {
-      if (failed == 0 && mounted) {
-        setState(() {
-          _plans[m.id] = SyncPlan(
-            mappingId: m.id,
-            mappingName: m.name,
-            toSend: const [],
-            newOnly: const [],
-          );
-        });
-      } else if (failed > 0) {
-        _toast('$failed 个文件同步失败，请重新对比后重试',
+    if (result != null) {
+      if (result.success) {
+        if (mounted) {
+          setState(() {
+            _plans[m.id] = SyncPlan(
+              mappingId: m.id,
+              mappingName: m.name,
+              toPush: const [],
+              toPull: const [],
+              skippedCount: plan.skippedCount + plan.totalCount,
+            );
+          });
+        }
+      } else {
+        _toast('${result.failed} 个文件同步失败，请重新对比后重试',
             severity: InfoBarSeverity.warning);
       }
     }
@@ -361,22 +390,50 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _persistSyncLog({
-    required String name,
-    required List<String> syncedNames,
-    required int syncedBytes,
-    required Future<void> Function(
-            String name, int count, int bytes, List<String> files)
-        push,
+    required String peerName,
+    required String mappingName,
+    required List<String> sentNames,
+    required int sentBytes,
+    required List<String> receivedNames,
+    required int receivedBytes,
+    required Future<void> Function(SyncLogReport report) push,
   }) async {
-    if (syncedNames.isEmpty) return;
+    if (sentNames.isEmpty && receivedNames.isEmpty) return;
+    final report = SyncLogReport(
+      mappingName: mappingName,
+      peerName: peerName,
+      time: DateTime.now(),
+      sentCount: sentNames.length,
+      sentBytes: sentBytes,
+      sentFiles: sentNames,
+      receivedCount: receivedNames.length,
+      receivedBytes: receivedBytes,
+      receivedFiles: receivedNames,
+    );
     await scope.syncLog.add(
-      name: name,
-      fileCount: syncedNames.length,
-      totalBytes: syncedBytes,
-      files: syncedNames,
+      name: report.mappingName,
+      time: report.time,
+      peerName: report.peerName,
+      sentCount: report.sentCount,
+      sentBytes: report.sentBytes,
+      sentFiles: report.sentFiles,
+      receivedCount: report.receivedCount,
+      receivedBytes: report.receivedBytes,
+      receivedFiles: report.receivedFiles,
     );
     try {
-      await push(name, syncedNames.length, syncedBytes, syncedNames);
+      // 推送给对端的日志要带上本机设备名，对端据此显示「对端」名称。
+      await push(SyncLogReport(
+        mappingName: report.mappingName,
+        peerName: scope.config.config.deviceName,
+        time: report.time,
+        sentCount: report.sentCount,
+        sentBytes: report.sentBytes,
+        sentFiles: report.sentFiles,
+        receivedCount: report.receivedCount,
+        receivedBytes: report.receivedBytes,
+        receivedFiles: report.receivedFiles,
+      ));
     } catch (_) {}
   }
 
@@ -387,9 +444,7 @@ class _HomePageState extends State<HomePage> {
     final cfg = scope.config.config;
     final devices = scope.discovery?.devices ?? const <PeerDevice>[];
     final mappings = cfg.mappings;
-    final running = isSender
-        ? (scope.server?.running ?? false)
-        : (scope.receiverServer?.running ?? false);
+    final running = scope.server?.running ?? false;
 
     return Center(
       child: ConstrainedBox(
@@ -400,7 +455,7 @@ class _HomePageState extends State<HomePage> {
             AppPageHeader(
               title: '状态',
               subtitle:
-                  'MySend · ${isSender ? '电脑发送端' : '安卓接收端'} · 局域网单向同步',
+                  'MySend · ${isSender ? '电脑端' : '安卓端'} · 局域网双向同步',
             ),
             const SizedBox(height: 18),
             _localCard(
@@ -411,7 +466,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 22),
             SectionHeader(
-              title: isSender ? '接收设备' : '发送设备',
+              title: '可连接设备',
               count: '${devices.length} 台',
             ),
             const SizedBox(height: 10),
@@ -487,7 +542,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${isSender ? '发送端' : '接收端'} · ${_formLabel(deviceForm)}',
+                      '${isSender ? '电脑端' : '安卓端'} · ${_formLabel(deviceForm)}',
                       style: const TextStyle(fontSize: 11, color: _muted),
                     ),
                   ],
@@ -511,7 +566,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 10),
           const Text(
             '请确保电脑与手机连接同一 Wi-Fi，或让电脑连接手机热点。'
-            '任一端都可以发起对比与同步。',
+            '任一端点击同步即可双向互补新增。',
             style: TextStyle(fontSize: 12, height: 1.5, color: _muted2),
           ),
         ],
@@ -597,7 +652,7 @@ class _HomePageState extends State<HomePage> {
     final syncing = _syncing[m.id] == true;
     final anySyncing = _syncing.values.any((v) => v);
     final connected = _peer != null;
-    final path = isSender ? m.sourcePath : m.destPath;
+    final path = m.localRoot(isSender);
 
     final String status;
     final Color statusColor;
@@ -617,7 +672,10 @@ class _HomePageState extends State<HomePage> {
       status = '已一致';
       statusColor = _success;
     } else {
-      status = '新增 ${plan.newOnly.length} 个';
+      final parts = <String>[];
+      if (plan.toPush.isNotEmpty) parts.add('发送 ${plan.toPush.length}');
+      if (plan.toPull.isNotEmpty) parts.add('接收 ${plan.toPull.length}');
+      status = parts.join(' · ');
       statusColor = _accent;
     }
 
@@ -654,7 +712,12 @@ class _HomePageState extends State<HomePage> {
             children: [
               if (plan != null && !plan.isEmpty)
                 Text(
-                  formatBytes(plan.totalBytes),
+                  [
+                    if (plan.toPush.isNotEmpty)
+                      '发送 ${formatBytes(plan.pushBytes)}',
+                    if (plan.toPull.isNotEmpty)
+                      '接收 ${formatBytes(plan.pullBytes)}',
+                  ].join(' · '),
                   style: const TextStyle(fontSize: 11, color: _muted),
                 ),
               const Spacer(),
@@ -820,30 +883,40 @@ class _SearchingIndicatorState extends State<_SearchingIndicator>
 class _SyncProgress {
   final int done;
   final int total;
+  final int sentCount;
+  final int receivedCount;
   final int sentBytes;
+  final int receivedBytes;
   final String currentName;
+  final SyncDirection? direction;
 
   const _SyncProgress({
     this.done = 0,
     this.total = 0,
+    this.sentCount = 0,
+    this.receivedCount = 0,
     this.sentBytes = 0,
+    this.receivedBytes = 0,
     this.currentName = '',
+    this.direction,
   });
+
+  int get totalBytes => sentBytes + receivedBytes;
 }
 
-/// 同步进度弹窗：平滑进度条 + 文件计数 + 当前文件 + 速度，完成后需手动关闭。
+/// 同步进度弹窗：总进度 + 发送/接收分项 + 当前文件 + 速度，完成后需手动关闭。
 class _SyncDialog extends StatefulWidget {
   final String mappingName;
-  final int totalBytes;
 
   /// 同步过程中收集到的失败原因（最多 20 条），由调用方持有。
   final List<String> failures;
-  final Future<int> Function(
-      void Function(int done, int total, FileEntry current)) run;
+  final Future<SyncResult> Function(
+    void Function(int done, int total, FileEntry current, SyncDirection dir)
+        onProgress,
+  ) run;
 
   const _SyncDialog({
     required this.mappingName,
-    required this.totalBytes,
     required this.failures,
     required this.run,
   });
@@ -857,7 +930,7 @@ class _SyncDialogState extends State<_SyncDialog> {
       ValueNotifier(const _SyncProgress());
   bool _running = true;
   String? _error;
-  int _failed = 0;
+  SyncResult? _result;
   final Stopwatch _watch = Stopwatch();
 
   @override
@@ -875,17 +948,27 @@ class _SyncDialogState extends State<_SyncDialog> {
 
   Future<void> _start() async {
     try {
-      _failed = await widget.run((done, total, current) {
+      final result = await widget.run((done, total, current, direction) {
         if (!mounted) return;
         final p = _progress.value;
+        final pushing = direction == SyncDirection.push;
         _progress.value = _SyncProgress(
           done: done,
           total: total,
-          sentBytes: p.sentBytes + current.size,
+          sentCount: p.sentCount + (pushing ? 1 : 0),
+          receivedCount: p.receivedCount + (pushing ? 0 : 1),
+          sentBytes: p.sentBytes + (pushing ? current.size : 0),
+          receivedBytes: p.receivedBytes + (pushing ? 0 : current.size),
           currentName: current.relativePath.split('/').last,
+          direction: direction,
         );
       });
-      if (mounted) setState(() => _running = false);
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _result = result;
+        });
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -900,10 +983,11 @@ class _SyncDialogState extends State<_SyncDialog> {
   Widget build(BuildContext context) {
     final finished = !_running;
     final err = _error;
+    final failed = _result?.failed ?? 0;
     final title = finished
         ? (err != null
             ? '同步失败'
-            : _failed > 0
+            : failed > 0
                 ? '同步完成（部分失败）'
                 : '同步完成')
         : '同步中 · ${widget.mappingName}';
@@ -925,7 +1009,12 @@ class _SyncDialogState extends State<_SyncDialog> {
                       ? 0.0
                       : (p.done / p.total).clamp(0.0, 1.0).toDouble();
                   final seconds = _watch.elapsedMilliseconds / 1000.0;
-                  final speed = seconds <= 0 ? 0.0 : p.sentBytes / seconds;
+                  final speed = seconds <= 0 ? 0.0 : p.totalBytes / seconds;
+                  final dirLabel = p.direction == SyncDirection.push
+                      ? '发送'
+                      : p.direction == SyncDirection.pull
+                          ? '接收'
+                          : '';
                   return Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -941,10 +1030,16 @@ class _SyncDialogState extends State<_SyncDialog> {
                         style: const TextStyle(
                             fontSize: 13, fontWeight: FontWeight.w500),
                       ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '已发送 ${p.sentCount} · 已接收 ${p.receivedCount}',
+                        style: const TextStyle(fontSize: 11, color: _muted),
+                      ),
                       if (!finished && p.currentName.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
-                          '当前：${p.currentName}',
+                          '当前：${dirLabel.isEmpty ? '' : '$dirLabel '}'
+                          '${p.currentName}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 11, color: _muted),
@@ -952,14 +1047,14 @@ class _SyncDialogState extends State<_SyncDialog> {
                       ],
                       const SizedBox(height: 4),
                       Text(
-                        '已传输 ${formatBytes(p.sentBytes)} / '
-                        '${formatBytes(widget.totalBytes)}',
+                        '发送 ${formatBytes(p.sentBytes)} · '
+                        '接收 ${formatBytes(p.receivedBytes)}',
                         style: const TextStyle(fontSize: 11, color: _muted),
                       ),
-                      if (finished && _failed > 0) ...[
+                      if (finished && failed > 0) ...[
                         const SizedBox(height: 4),
                         Text(
-                          '$_failed 个文件失败，请重新对比后重试',
+                          '$failed 个文件失败，请重新对比后重试',
                           style: const TextStyle(fontSize: 11, color: _warning),
                         ),
                       ],
@@ -998,7 +1093,8 @@ class _SyncDialogState extends State<_SyncDialog> {
         if (finished)
           FilledButton(
             child: const Text('关闭'),
-            onPressed: () => Navigator.pop(context, err == null ? _failed : -1),
+            onPressed: () =>
+                Navigator.pop(context, err == null ? _result : null),
           ),
       ],
     );

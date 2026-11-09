@@ -68,9 +68,9 @@ class AboutPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
                           const Text(
-                            '局域网单向文件同步工具：把电脑上的文件夹按映射同步到 '
-                            'Android 手机 / 平板。一套 Flutter 代码同时构建 '
-                            'Windows 发送端与 Android 接收端，界面保持一致。',
+                            '局域网双向文件同步工具：电脑与 Android 手机 / 平板之间按映射'
+                            '互补新增文件。一套 Flutter 代码同时构建 Windows 与 '
+                            'Android 端，界面与同步逻辑保持一致。',
                             style: TextStyle(
                               fontSize: 13,
                               height: 1.6,
@@ -79,7 +79,7 @@ class AboutPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 14),
                           _line('版本', AppConstants.currentVersion),
-                          _line('平台', 'Windows 发送端 / Android 接收端'),
+                          _line('平台', 'Windows / Android 双端'),
                           _line('传输协议', 'v2 · 会话鉴权 / 断点续传'),
                           _line('发现端口', '${AppConstants.discoveryPort}/udp'),
                           _line('传输端口',
@@ -100,10 +100,10 @@ class AboutPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                            '· 仅「电脑 → Android」单向传输\n'
-                            '· 只同步目标端不存在的新增文件\n'
-                            '· 已存在的文件直接跳过，不比对内容\n'
-                            '· 不处理删除，手机端多出的文件不会被清理\n'
+                            '· 任一端点击同步即可双向互补新增\n'
+                            '· 只同步对端不存在的新增文件\n'
+                            '· 两端都有的文件直接跳过，不比对内容\n'
+                            '· 不覆盖、不删除，对端多出的文件不会被清理\n'
                             '· 按相对路径保持目录结构',
                             style: TextStyle(
                                 fontSize: 12,
@@ -125,7 +125,7 @@ class AboutPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                            '连接后使用会话 token 鉴权；文件传输先写入目标目录下的 '
+                            '连接后使用会话 token 鉴权；文件传输先写入本机目录下的 '
                             '.mysend-part 分片，完成后原子替换，中断可续传。\n'
                             '当前使用局域网明文 HTTP 传输，未启用 TLS 加密，'
                             '建议仅在可信的家庭或办公网络内使用。'

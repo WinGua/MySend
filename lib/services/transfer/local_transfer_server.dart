@@ -9,25 +9,33 @@ import '../local_index_service.dart';
 import 'part_store.dart';
 import 'protocol.dart';
 
-/// Android 端 HTTP 服务（协议 v2）。
+/// 两端统一的 HTTP 服务（协议 v2）。
 ///
+/// 电脑端与安卓端具备完全相同的端点，因此任意一端都能作为发送方或接收方：
 /// - GET  /v2/hello
 /// - POST /v2/pair
-/// - GET  /v2/index     查询目标目录索引（供 PC 发起对比）
-/// - GET  /v2/resume    查询已接收偏移
-/// - POST /v2/upload    分片续传上传（原子落盘）
-/// - POST /v2/log       接收对端同步日志
+/// - GET  /v2/index      查询本机映射根索引
+/// - GET  /v2/file       下载本机文件（支持 Range 续传）
+/// - GET  /v2/resume     查询本机已接收偏移
+/// - POST /v2/resume/batch 批量查询已接收偏移
+/// - POST /v2/upload     分片续传上传（原子落盘）
+/// - POST /v2/log        接收对端同步日志
 /// - POST /v2/disconnect
-class ReceiverServer implements TransferServer {
+class LocalTransferServer implements TransferServer {
   final int preferredPort;
-  final String deviceId;
-  final String deviceName;
-  final String session;
   final ConfigRepository config;
 
+  /// 本机是否为电脑端：仅用于角色标识与选择映射的本地根目录。
+  final bool isSender;
+  final String session;
+
+  /// 配对成功时回调，同时带回对端签发的 token（供本机反向调用）。
   final void Function(PeerDevice peer, String peerToken) onPeerPaired;
-  final Future<void> Function(String name, int count, int bytes, List<String> files)
-      onSyncLog;
+
+  /// 收到对端推送的同步日志。
+  final Future<void> Function(SyncLogReport report) onSyncLog;
+
+  /// 对端主动断开。
   final void Function(String deviceId) onDisconnect;
 
   /// 当前是否有同步任务占用（同一设备同一时刻只允许一个任务）。
@@ -40,12 +48,11 @@ class ReceiverServer implements TransferServer {
   HttpServer? _server;
   final TokenStore _tokens = TokenStore();
 
-  ReceiverServer({
+  LocalTransferServer({
     required this.preferredPort,
-    required this.deviceId,
-    required this.deviceName,
-    required this.session,
     required this.config,
+    required this.isSender,
+    required this.session,
     required this.onPeerPaired,
     required this.onSyncLog,
     required this.onDisconnect,
@@ -56,6 +63,8 @@ class ReceiverServer implements TransferServer {
 
   @override
   bool get running => _server != null;
+
+  String get _role => isSender ? 'pc' : 'android';
 
   @override
   String issueTokenFor(String deviceId) => _tokens.issueFor(deviceId);
@@ -108,6 +117,9 @@ class ReceiverServer implements TransferServer {
         case '/v2/index':
           await _index(req);
           return;
+        case '/v2/file':
+          await _file(req);
+          return;
         case '/v2/resume':
           await _resume(req);
           return;
@@ -141,6 +153,7 @@ class ReceiverServer implements TransferServer {
       writeError(req, 426, 'PROTO_MISMATCH', '协议版本不一致');
       return;
     }
+    final cfg = config.config;
     writeJson(req, {
       'proto': AppConstants.protoVersion,
       'app': AppConstants.appTag,
@@ -148,9 +161,9 @@ class ReceiverServer implements TransferServer {
       'minPeer': AppConstants.minPeer,
       'session': session,
       'device': {
-        'id': deviceId,
-        'name': deviceName,
-        'role': 'android',
+        'id': cfg.deviceId,
+        'name': cfg.deviceName,
+        'role': _role,
       },
     });
   }
@@ -173,7 +186,13 @@ class ReceiverServer implements TransferServer {
       writeError(req, 426, 'PROTO_MISMATCH', '协议版本不一致');
       return;
     }
-    if (body['role'] != 'pc') {
+    final peerRole = body['role'] as String? ?? '';
+    // 只接受对端角色，避免同角色设备互连（电脑 ↔ 电脑、安卓 ↔ 安卓）。
+    if (peerRole != 'pc' && peerRole != 'android') {
+      writeError(req, 400, 'BAD_REQUEST', '角色不匹配');
+      return;
+    }
+    if (peerRole == _role) {
       writeError(req, 400, 'BAD_REQUEST', '角色不匹配');
       return;
     }
@@ -189,14 +208,15 @@ class ReceiverServer implements TransferServer {
     final token = _tokens.issueFor(requester.id);
     onPeerPaired(requester.copyWith(connected: true), peerToken);
 
+    final cfg = config.config;
     writeJson(req, {
       'ok': true,
       'token': token,
       'session': session,
       'device': {
-        'id': deviceId,
-        'name': deviceName,
-        'role': 'android',
+        'id': cfg.deviceId,
+        'name': cfg.deviceName,
+        'role': _role,
       },
     });
   }
@@ -206,13 +226,17 @@ class ReceiverServer implements TransferServer {
       writeError(req, 409, 'BUSY', '正在同步中');
       return;
     }
-    final name = req.uri.queryParameters['name'] ?? '';
-    final mapping = _mapping(name);
+    final mapping = _mapping(req.uri.queryParameters['name'] ?? '');
     if (mapping == null) {
-      writeError(req, 404, 'MAPPING_NOT_FOUND', '映射「$name」不存在');
+      writeError(req, 404, 'MAPPING_NOT_FOUND', '映射不存在');
       return;
     }
-    final index = await LocalIndexService.scan(mapping.destPath);
+    final root = mapping.localRoot(isSender);
+    if (root.isEmpty) {
+      writeError(req, 409, 'MAPPING_NOT_CONFIGURED', '映射未配置本机目录');
+      return;
+    }
+    final index = await LocalIndexService.scan(root);
     final files = index.values.map((e) => e.toJson()).toList()
       ..sort((a, b) => (a['p'] as String).compareTo(b['p'] as String));
     writeJson(req, {
@@ -220,6 +244,70 @@ class ReceiverServer implements TransferServer {
       'name': mapping.name,
       'files': files,
     });
+  }
+
+  Future<void> _file(HttpRequest req) async {
+    if (busy || _uploading) {
+      writeError(req, 409, 'BUSY', '正在同步中');
+      return;
+    }
+    final mapping = _mapping(req.uri.queryParameters['name'] ?? '');
+    if (mapping == null) {
+      writeError(req, 404, 'MAPPING_NOT_FOUND', '映射不存在');
+      return;
+    }
+    final root = mapping.localRoot(isSender);
+    if (root.isEmpty) {
+      writeError(req, 409, 'MAPPING_NOT_CONFIGURED', '映射未配置本机目录');
+      return;
+    }
+    final rel = req.uri.queryParameters['path'] ?? '';
+    final target = LocalIndexService.safeFile(root, rel);
+    if (target == null) {
+      writeError(req, 400, 'PATH_INVALID', '路径非法');
+      return;
+    }
+    if (!await target.exists()) {
+      writeError(req, 404, 'FILE_NOT_FOUND', '文件不存在');
+      return;
+    }
+
+    final total = await target.length();
+    var start = 0;
+    var status = 200;
+    final range = req.headers.value(HttpHeaders.rangeHeader);
+    if (range != null) {
+      final match = RegExp(r'^bytes=(\d+)-$', caseSensitive: false)
+          .firstMatch(range.trim());
+      final parsed = int.tryParse(match?.group(1) ?? '');
+      if (parsed == null || parsed < 0 || parsed >= total) {
+        writeError(req, 416, 'RANGE_INVALID', 'Range 起点越界');
+        return;
+      }
+      start = parsed;
+      status = 206;
+    }
+
+    final res = req.response;
+    res.statusCode = status;
+    res.headers.set(HttpHeaders.connectionHeader, 'close');
+    res.headers.contentType = ContentType('application', 'octet-stream');
+    res.headers.set('Accept-Ranges', 'bytes');
+    res.headers.contentLength = total - start;
+    if (status == 206) {
+      res.headers.set(
+        'Content-Range',
+        'bytes $start-${total - 1}/$total',
+      );
+    }
+    try {
+      await res.addStream(target.openRead(start));
+    } catch (_) {
+      // 对端中断连接，忽略。
+    }
+    try {
+      await res.close();
+    } catch (_) {}
   }
 
   Future<void> _resume(HttpRequest req) async {
@@ -231,27 +319,33 @@ class ReceiverServer implements TransferServer {
       writeError(req, 409, 'BUSY', '正在同步中');
       return;
     }
-    final name = req.uri.queryParameters['name'] ?? '';
+    final mapping = _mapping(req.uri.queryParameters['name'] ?? '');
+    if (mapping == null) {
+      writeError(req, 404, 'MAPPING_NOT_FOUND', '映射不存在');
+      return;
+    }
     final rel = req.uri.queryParameters['path'] ?? '';
     final size = int.tryParse(req.uri.queryParameters['size'] ?? '');
     final mtime = int.tryParse(req.uri.queryParameters['mtime'] ?? '');
-    final mapping = _mapping(name);
-    if (mapping == null) {
-      writeError(req, 404, 'MAPPING_NOT_FOUND', '映射「$name」不存在');
-      return;
-    }
     if (!isValidRelPath(rel) || size == null || size < 0 || mtime == null) {
       writeError(req, 400, 'PATH_INVALID', '路径或大小非法');
       return;
     }
-    final offset =
-        await PartStore.currentOffset(mapping.destPath, rel, size, mtime);
+    final root = mapping.localRoot(isSender);
+    if (root.isEmpty) {
+      writeError(req, 409, 'MAPPING_NOT_CONFIGURED', '映射未配置本机目录');
+      return;
+    }
+    final offset = await PartStore.currentOffset(
+      root,
+      rel,
+      size,
+      mtime,
+    );
     writeJson(req, {'ok': true, 'offset': offset});
   }
 
-  /// 批量查询续传偏移：一次请求返回整批文件的已接收字节数。
-  ///
-  /// 请求体：`{name, items:[{p,s,m}]}`；响应：`{ok, offsets:{path:offset}}`。
+  /// 批量查询续传偏移：请求体 `{name, items:[{p,s,m}]}`。
   Future<void> _resumeBatch(HttpRequest req) async {
     if (req.method != 'POST') {
       writeError(req, 400, 'BAD_REQUEST', '方法不支持');
@@ -277,6 +371,11 @@ class ReceiverServer implements TransferServer {
       return;
     }
 
+    final root = mapping.localRoot(isSender);
+    if (root.isEmpty) {
+      writeError(req, 409, 'MAPPING_NOT_CONFIGURED', '映射未配置本机目录');
+      return;
+    }
     final offsets = <String, int>{};
     for (final raw in items) {
       if (raw is! Map) continue;
@@ -287,8 +386,7 @@ class ReceiverServer implements TransferServer {
       if (!isValidRelPath(rel) || size == null || size < 0 || mtime == null) {
         continue;
       }
-      offsets[rel] =
-          await PartStore.currentOffset(mapping.destPath, rel, size, mtime);
+      offsets[rel] = await PartStore.currentOffset(root, rel, size, mtime);
     }
     writeJson(req, {'ok': true, 'offsets': offsets});
   }
@@ -298,21 +396,25 @@ class ReceiverServer implements TransferServer {
       writeError(req, 400, 'BAD_REQUEST', '方法不支持');
       return;
     }
-    final name = req.uri.queryParameters['name'] ?? '';
+    final mapping = _mapping(req.uri.queryParameters['name'] ?? '');
+    if (mapping == null) {
+      writeError(req, 404, 'MAPPING_NOT_FOUND', '映射不存在');
+      return;
+    }
     final rel = req.uri.queryParameters['path'] ?? '';
     final size = int.tryParse(req.uri.queryParameters['size'] ?? '');
     final mtime = int.tryParse(req.uri.queryParameters['mtime'] ?? '') ?? 0;
-    final mapping = _mapping(name);
-    if (mapping == null) {
-      writeError(req, 404, 'MAPPING_NOT_FOUND', '映射「$name」不存在');
-      return;
-    }
     if (!isValidRelPath(rel) || size == null || size < 0) {
       writeError(req, 400, 'PATH_INVALID', '路径或大小非法');
       return;
     }
 
-    final dst = LocalIndexService.safeFile(mapping.destPath, rel);
+    final root = mapping.localRoot(isSender);
+    if (root.isEmpty) {
+      writeError(req, 409, 'MAPPING_NOT_CONFIGURED', '映射未配置本机目录');
+      return;
+    }
+    final dst = LocalIndexService.safeFile(root, rel);
     if (dst == null) {
       writeError(req, 400, 'PATH_INVALID', '路径非法');
       return;
@@ -324,7 +426,11 @@ class ReceiverServer implements TransferServer {
     _uploading = true;
 
     try {
-      final root = mapping.destPath;
+      // 双向同步只补新增：目标已存在时绝不覆盖。
+      if (await dst.exists()) {
+        writeError(req, 409, 'ALREADY_EXISTS', '目标文件已存在，已跳过');
+        return;
+      }
       final part = PartStore.partFile(root, rel);
       final currentOffset =
           await PartStore.currentOffset(root, rel, size, mtime);
@@ -401,19 +507,14 @@ class ReceiverServer implements TransferServer {
   }
 
   Future<void> _log(HttpRequest req) async {
-    final body = await readJsonObject(req);
+    // 大目录的文件名清单可能超过默认 1 MB，这里放宽到 8 MB。
+    final body = await readJsonObject(req, maxBytes: 8 * 1024 * 1024);
     if (body == null) {
       writeError(req, 400, 'BAD_REQUEST', '请求体非法');
       return;
     }
-    await onSyncLog(
-      body['name'] as String? ?? '',
-      (body['count'] as num?)?.toInt() ?? 0,
-      (body['bytes'] as num?)?.toInt() ?? 0,
-      (body['files'] as List<dynamic>? ?? const [])
-          .map((e) => e.toString())
-          .toList(),
-    );
+    // 对端报文站在对端视角，本机保存前需要互换发送/接收。
+    await onSyncLog(SyncLogReport.fromJson(body).mirrored());
     writeJson(req, {'ok': true});
   }
 

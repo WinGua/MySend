@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:path/path.dart' as p;
 
 import '../core/constants.dart';
@@ -10,134 +11,197 @@ import 'local_index_service.dart';
 import 'transfer/part_store.dart';
 import 'transfer/peer_client.dart';
 
-/// 同步引擎：计算差异、执行单向传输（发送端 → 接收端）。
+/// 单个文件的传输方向（以本机视角）。
+enum SyncDirection { push, pull }
+
+/// 一次双向同步的执行结果。
+class SyncResult {
+  final int pushed;
+  final int pulled;
+  final int pushFailed;
+  final int pullFailed;
+
+  const SyncResult({
+    required this.pushed,
+    required this.pulled,
+    required this.pushFailed,
+    required this.pullFailed,
+  });
+
+  int get failed => pushFailed + pullFailed;
+
+  bool get success => failed == 0;
+}
+
+/// 同步引擎：计算双向差异、执行互补传输。
 ///
 /// 规则：
-/// - 「新增」= 发送端索引中存在、接收端不存在的相对路径 → 待传。
-/// - 只同步新增文件，不比对内容、不处理删除。
-/// - 传输走协议 v2：先落 `.mysend-part` 分片，完成后原子改名。
+/// - 「本机有、对端无」→ 本机发送
+/// - 「对端有、本机无」→ 本机接收
+/// - 两端都有 → 跳过，不比对内容、不覆盖、不删除
+/// - 传输走协议 v2：先落 `.mysend-part` 分片，完成后原子改名
 class SyncEngine {
   SyncEngine._();
 
-  static SyncPlan computePlan({
+  static SyncPlan computeBidirectionalPlan({
     required SyncMapping mapping,
-    required Map<String, FileEntry> source,
-    required Map<String, FileEntry> dest,
+    required Map<String, FileEntry> local,
+    required Map<String, FileEntry> remote,
   }) {
-    final newOnly = <FileEntry>[];
+    final toPush = <FileEntry>[];
+    final toPull = <FileEntry>[];
+    var skipped = 0;
 
-    for (final e in source.values) {
-      if (!dest.containsKey(e.relativePath)) {
-        newOnly.add(e);
+    for (final e in local.values) {
+      if (remote.containsKey(e.relativePath)) {
+        skipped++;
+      } else {
+        toPush.add(e);
+      }
+    }
+    for (final e in remote.values) {
+      if (!local.containsKey(e.relativePath)) {
+        toPull.add(e);
       }
     }
 
-    final toSend = <FileEntry>[...newOnly];
-    toSend.sort((a, b) => a.relativePath.compareTo(b.relativePath));
+    toPush.sort((a, b) => a.relativePath.compareTo(b.relativePath));
+    toPull.sort((a, b) => a.relativePath.compareTo(b.relativePath));
 
     return SyncPlan(
       mappingId: mapping.id,
       mappingName: mapping.name,
-      toSend: toSend,
-      newOnly: newOnly,
+      toPush: toPush,
+      toPull: toPull,
+      skippedCount: skipped,
     );
   }
 
-  /// 依次从对端拉取 [files] 写入本机 [mapping.destPath]。
+  /// 执行双向同步：先发送本机新增，再接收对端新增。
   ///
-  /// 单个文件失败不中断任务，返回失败数量。调用方负责关闭 [client]。
-  static Future<int> run({
+  /// [localRoot] 为本机在该映射中的根目录，发送与接收都读写它。
+  /// 单个文件失败不中断任务，结果按方向分别计数。
+  static Future<SyncResult> runBidirectional({
     required SyncMapping mapping,
     required PeerClient client,
-    required List<FileEntry> files,
-    required void Function(int done, int total, FileEntry current) onProgress,
-    void Function(FileEntry entry, Object error)? onFailure,
+    required SyncPlan plan,
+    required String localRoot,
+    required void Function(
+      int done,
+      int total,
+      FileEntry current,
+      SyncDirection direction,
+    ) onProgress,
+    void Function(FileEntry entry, SyncDirection direction, Object error)?
+        onFailure,
   }) async {
-    final total = files.length;
-    var failed = 0;
-    for (var i = 0; i < total; i++) {
-      final e = files[i];
-      try {
-        await _pullOne(mapping, client, e);
-        onProgress(i + 1 - failed, total, e);
-      } catch (err) {
-        failed++;
-        onFailure?.call(e, err);
-      }
-    }
-    return failed;
-  }
+    final total = plan.totalCount;
+    var done = 0;
+    var pushed = 0;
+    var pulled = 0;
+    var pushFailed = 0;
+    var pullFailed = 0;
 
-  /// 依次把 [files] 推送到对端（供 PC 发起同步时使用）。
-  ///
-  /// 单个文件失败不中断任务，返回失败数量。调用方负责关闭 [client]。
-  static Future<int> push({
-    required SyncMapping mapping,
-    required PeerClient client,
-    required List<FileEntry> files,
-    required void Function(int done, int total, FileEntry current) onProgress,
-    void Function(FileEntry entry, Object error)? onFailure,
-  }) async {
-    final total = files.length;
-    // 先批量查询续传偏移，正常情况整批文件只需一次请求。
-    var offsets = const <String, int>{};
-    try {
-      final merged = <String, int>{};
-      const chunkSize = 2000;
-      for (var i = 0; i < files.length; i += chunkSize) {
-        final end = (i + chunkSize < files.length) ? i + chunkSize : files.length;
-        merged.addAll(
-          await client.resumeOffsets(mapping, files.sublist(i, end)),
-        );
-      }
-      offsets = merged;
-    } catch (_) {
-      // 对端不支持批量查询时回退为逐文件查询。
-    }
-
-    var failed = 0;
-    for (var i = 0; i < total; i++) {
-      final e = files[i];
-      final srcFile = p.join(
-        mapping.sourcePath,
-        e.relativePath.replaceAll('/', Platform.pathSeparator),
-      );
+    if (plan.toPush.isNotEmpty) {
+      // 先批量查询续传偏移，正常情况整批文件只需一次请求。
+      var offsets = const <String, int>{};
       try {
-        final start = offsets[e.relativePath] ??
-            await client
-                .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
-                .timeout(AppConstants.controlTimeout);
-        try {
-          await client.upload(
-            mapping,
-            e.relativePath,
-            File(srcFile),
-            mtimeMs: e.mtimeMs,
-            start: start,
-          );
-        } on TransferException catch (err) {
-          // 分片在批量查询后发生变化（如被对端清理）：重查一次偏移后重试。
-          if (err.status != 416) rethrow;
-          final retryStart = start > 0
-              ? 0
-              : await client
-                  .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
-                  .timeout(AppConstants.controlTimeout);
-          await client.upload(
-            mapping,
-            e.relativePath,
-            File(srcFile),
-            mtimeMs: e.mtimeMs,
-            start: retryStart,
+        final merged = <String, int>{};
+        const chunkSize = 2000;
+        for (var i = 0; i < plan.toPush.length; i += chunkSize) {
+          final end = (i + chunkSize < plan.toPush.length)
+              ? i + chunkSize
+              : plan.toPush.length;
+          merged.addAll(
+            await client.resumeOffsets(mapping, plan.toPush.sublist(i, end)),
           );
         }
-        onProgress(i + 1 - failed, total, e);
-      } catch (err) {
-        failed++;
-        onFailure?.call(e, err);
+        offsets = merged;
+      } catch (_) {
+        // 对端不支持批量查询时回退为逐文件查询。
+      }
+
+      for (final e in plan.toPush) {
+        try {
+          await _pushOne(
+            mapping,
+            client,
+            e,
+            localRoot,
+            offsets[e.relativePath],
+          );
+          pushed++;
+          done++;
+          onProgress(done, total, e, SyncDirection.push);
+        } catch (err) {
+          pushFailed++;
+          onFailure?.call(e, SyncDirection.push, err);
+        }
       }
     }
-    return failed;
+
+    for (final e in plan.toPull) {
+      try {
+        await _pullOne(mapping, client, e, localRoot);
+        pulled++;
+        done++;
+        onProgress(done, total, e, SyncDirection.pull);
+      } catch (err) {
+        pullFailed++;
+        onFailure?.call(e, SyncDirection.pull, err);
+      }
+    }
+
+    return SyncResult(
+      pushed: pushed,
+      pulled: pulled,
+      pushFailed: pushFailed,
+      pullFailed: pullFailed,
+    );
+  }
+
+  /// 推送单个文件（含断点续传与偏移失效重试）。
+  static Future<void> _pushOne(
+    SyncMapping mapping,
+    PeerClient client,
+    FileEntry e,
+    String localRoot,
+    int? knownOffset,
+  ) async {
+    final srcFile = p.join(
+      localRoot,
+      e.relativePath.replaceAll('/', Platform.pathSeparator),
+    );
+    final start = knownOffset ??
+        await client
+            .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
+            .timeout(AppConstants.controlTimeout);
+    try {
+      await client.upload(
+        mapping,
+        e.relativePath,
+        File(srcFile),
+        mtimeMs: e.mtimeMs,
+        start: start,
+      );
+    } on TransferException catch (err) {
+      // 目标已存在说明对端在对比后已拥有该文件，按成功跳过处理。
+      if (err.code == 'ALREADY_EXISTS') return;
+      // 分片在批量查询后发生变化（如被对端清理）：重查一次偏移后重试。
+      if (err.status != 416) rethrow;
+      final retryStart = start > 0
+          ? 0
+          : await client
+              .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
+              .timeout(AppConstants.controlTimeout);
+      await client.upload(
+        mapping,
+        e.relativePath,
+        File(srcFile),
+        mtimeMs: e.mtimeMs,
+        start: retryStart,
+      );
+    }
   }
 
   /// 拉取单个文件：分片续传 + 原子落盘 + 回写 mtime。
@@ -145,8 +209,9 @@ class SyncEngine {
     SyncMapping mapping,
     PeerClient client,
     FileEntry e,
+    String localRoot,
   ) async {
-    final root = mapping.destPath;
+    final root = localRoot;
     final rel = e.relativePath;
     if (!isValidRelPath(rel)) {
       throw const TransferException(400, 'PATH_INVALID', '对端返回了非法路径');

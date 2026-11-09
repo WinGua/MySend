@@ -15,8 +15,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 /**
- * 接收端后台保活服务：以「前台服务 + 常驻通知 + 部分唤醒锁」的方式，
- * 保持局域网接收服务在切后台 / 黑屏后不被系统回收。
+ * 后台保活服务：以「前台服务 + 常驻通知 + 部分唤醒锁」的方式，
+ * 保持局域网同步服务在切后台 / 黑屏后不被系统回收。
  */
 class SyncKeepAliveService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null

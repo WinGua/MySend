@@ -1,13 +1,17 @@
 import 'dart:ui' show ImageFilter;
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app_scope.dart';
+import '../core/constants.dart';
 import '../core/utils.dart';
+import '../services/update_service.dart';
 import 'pages/home_page.dart';
 import 'pages/mappings_page.dart';
 import 'pages/settings_page.dart';
 import 'widgets/glass.dart';
+import 'widgets/update_dialog.dart';
 import 'window_title_bar.dart';
 
 const _accent = Color(0xFF4A9EFF);
@@ -25,6 +29,9 @@ class Shell extends StatefulWidget {
 class _ShellState extends State<Shell> {
   int _index = 0;
 
+  /// 每次启动只自动检查一次更新。
+  static bool _updateChecked = false;
+
   static const List<Widget> _pages = <Widget>[
     HomePage(),
     MappingsPage(),
@@ -35,6 +42,28 @@ class _ShellState extends State<Shell> {
   void initState() {
     super.initState();
     scope.addListener(_onScopeChanged);
+    _scheduleUpdateCheck();
+  }
+
+  /// 首帧后静默检查更新，有新版本才弹窗，失败不打扰用户。
+  Future<void> _scheduleUpdateCheck() async {
+    if (_updateChecked) return;
+    _updateChecked = true;
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    if (!mounted) return;
+    try {
+      final info = await UpdateService.fetchLatest();
+      if (!mounted) return;
+      if (!UpdateService.isNewer(info.version, AppConstants.currentVersion)) {
+        return;
+      }
+      final go = await showUpdatePrompt(context, info);
+      if (!mounted || !go) return;
+      final url = info.url.isEmpty ? AppConstants.releasesUrl : info.url;
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // 启动检查失败时静默跳过，手动检查仍会给出提示。
+    }
   }
 
   @override

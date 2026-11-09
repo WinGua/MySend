@@ -6,6 +6,8 @@ import 'package:mysend/models/file_entry.dart';
 import 'package:mysend/models/sync_mapping.dart';
 import 'package:mysend/services/sync_engine.dart';
 import 'package:mysend/services/transfer/part_store.dart';
+import 'package:mysend/services/transfer/protocol.dart';
+import 'package:mysend/services/update_service.dart';
 
 void main() {
   group('isValidRelPath', () {
@@ -29,7 +31,7 @@ void main() {
     });
   });
 
-  group('SyncEngine.computePlan', () {
+  group('SyncEngine.computeBidirectionalPlan', () {
     const mapping = SyncMapping(
       id: 'm1',
       name: 'Album',
@@ -37,36 +39,83 @@ void main() {
       destPath: '/dest',
     );
 
-    test('只保留目标端不存在的新增文件', () {
-      const source = <String, FileEntry>{
+    test('分别计算发送与接收，并跳过两端都有的文件', () {
+      const local = <String, FileEntry>{
         'a.mp3': FileEntry(relativePath: 'a.mp3', size: 10, mtimeMs: 1),
         'b.mp3': FileEntry(relativePath: 'b.mp3', size: 20, mtimeMs: 2),
       };
-      const dest = <String, FileEntry>{
+      const remote = <String, FileEntry>{
         'a.mp3': FileEntry(relativePath: 'a.mp3', size: 10, mtimeMs: 1),
+        'c.mp3': FileEntry(relativePath: 'c.mp3', size: 30, mtimeMs: 3),
       };
 
-      final plan = SyncEngine.computePlan(
+      final plan = SyncEngine.computeBidirectionalPlan(
         mapping: mapping,
-        source: source,
-        dest: dest,
+        local: local,
+        remote: remote,
       );
 
-      expect(plan.toSend.map((e) => e.relativePath), ['b.mp3']);
-      expect(plan.totalBytes, 20);
+      expect(plan.toPush.map((e) => e.relativePath), ['b.mp3']);
+      expect(plan.toPull.map((e) => e.relativePath), ['c.mp3']);
+      expect(plan.skippedCount, 1);
+      expect(plan.pushBytes, 20);
+      expect(plan.pullBytes, 30);
+      expect(plan.totalCount, 2);
       expect(plan.isEmpty, isFalse);
     });
 
     test('两端一致时计划为空', () {
-      const source = <String, FileEntry>{
+      const local = <String, FileEntry>{
         'a.mp3': FileEntry(relativePath: 'a.mp3', size: 10, mtimeMs: 1),
       };
-      final plan = SyncEngine.computePlan(
+      final plan = SyncEngine.computeBidirectionalPlan(
         mapping: mapping,
-        source: source,
-        dest: source,
+        local: local,
+        remote: local,
       );
       expect(plan.isEmpty, isTrue);
+      expect(plan.skippedCount, 1);
+    });
+  });
+
+  group('SyncLogReport', () {
+    test('对端视角写入时互换发送与接收', () {
+      final report = SyncLogReport(
+        mappingName: 'Album',
+        peerName: '手机',
+        time: DateTime.fromMillisecondsSinceEpoch(1000),
+        sentCount: 2,
+        sentBytes: 20,
+        sentFiles: const ['a.mp3', 'b.mp3'],
+        receivedCount: 1,
+        receivedBytes: 5,
+        receivedFiles: const ['c.mp3'],
+      );
+
+      final mirrored = report.mirrored();
+      expect(mirrored.sentFiles, ['c.mp3']);
+      expect(mirrored.receivedFiles, ['a.mp3', 'b.mp3']);
+      expect(mirrored.sentBytes, 5);
+      expect(mirrored.receivedBytes, 20);
+    });
+  });
+
+  group('UpdateService', () {
+    test('版本比较', () {
+      expect(UpdateService.isNewer('1.2.0', '1.1.9'), isTrue);
+      expect(UpdateService.isNewer('v1.0.1', '1.0.0'), isTrue);
+      expect(UpdateService.isNewer('1.0.0', '1.0.0'), isFalse);
+      expect(UpdateService.compareVersions('1.0', '1.0.0'), 0);
+    });
+
+    test('更新日志去掉 Markdown 标记并限制行数', () {
+      final notes = UpdateService.summarizeNotes(
+        '### 更新内容\n\n**新增** 双向同步\n- 日志改造\n- [链接](https://example.com)',
+      );
+      expect(notes.contains('###'), isFalse);
+      expect(notes.contains('**'), isFalse);
+      expect(notes.contains('https://example.com'), isFalse);
+      expect(notes.contains('双向同步'), isTrue);
     });
   });
 

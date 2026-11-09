@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/material.dart' as material;
 import 'package:url_launcher/url_launcher.dart';
@@ -8,7 +5,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app_scope.dart';
 import '../../core/constants.dart';
 import '../../core/utils.dart';
+import '../../services/update_service.dart';
 import '../widgets/glass.dart';
+import '../widgets/update_dialog.dart';
 import 'about_page.dart';
 import 'sync_log_page.dart';
 
@@ -150,30 +149,13 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_checking) return;
     setState(() => _checking = true);
     try {
-      final latest = await _fetchLatestVersion();
-      final cmp = _compareVersions(latest, AppConstants.currentVersion);
+      final info = await UpdateService.fetchLatest();
       if (!mounted) return;
-      if (cmp > 0) {
-        final go = await showGlassDialog<bool>(
-          context: context,
-          builder: (ctx) => GlassDialog(
-            title: '发现新版本',
-            content: Text(
-              '最新版本 v$latest，当前版本 v${AppConstants.currentVersion}。',
-            ),
-            actions: [
-              Button(
-                child: const Text('稍后'),
-                onPressed: () => Navigator.pop(ctx, false),
-              ),
-              FilledButton(
-                child: const Text('前往下载'),
-                onPressed: () => Navigator.pop(ctx, true),
-              ),
-            ],
-          ),
-        );
-        if (go == true) await _openUrl(AppConstants.releasesUrl);
+      if (UpdateService.isNewer(info.version, AppConstants.currentVersion)) {
+        final go = await showUpdatePrompt(context, info);
+        if (go) {
+          await _openUrl(info.url.isEmpty ? AppConstants.releasesUrl : info.url);
+        }
       } else {
         await _notice('已是最新版本',
             '当前版本 v${AppConstants.currentVersion} 已是最新。');
@@ -183,39 +165,6 @@ class _SettingsPageState extends State<SettingsPage> {
     } finally {
       if (mounted) setState(() => _checking = false);
     }
-  }
-
-  Future<String> _fetchLatestVersion() async {
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 10);
-    try {
-      final req = await client.getUrl(Uri.parse(AppConstants.releasesApiUrl));
-      req.headers.set(HttpHeaders.userAgentHeader, 'MySend');
-      final res = await req.close();
-      if (res.statusCode != 200) {
-        throw HttpException('HTTP ${res.statusCode}');
-      }
-      final text = await res.transform(utf8.decoder).join();
-      final j = jsonDecode(text) as Map<String, dynamic>;
-      final tag = (j['tag_name'] as String? ?? '')
-          .replaceFirst(RegExp(r'^[vV]'), '');
-      if (tag.isEmpty) throw const FormatException('tag_name 为空');
-      return tag;
-    } finally {
-      client.close();
-    }
-  }
-
-  int _compareVersions(String a, String b) {
-    final pa = a.split('.').map((s) => int.tryParse(s) ?? 0).toList();
-    final pb = b.split('.').map((s) => int.tryParse(s) ?? 0).toList();
-    final n = pa.length > pb.length ? pa.length : pb.length;
-    for (var i = 0; i < n; i++) {
-      final va = i < pa.length ? pa[i] : 0;
-      final vb = i < pb.length ? pb[i] : 0;
-      if (va != vb) return va.compareTo(vb);
-    }
-    return 0;
   }
 
   Future<void> _notice(String title, String text) {
@@ -243,7 +192,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ? '暂无同步记录'
         : '最近：${logs.first.mappingName} · '
             '${_fmtTime(logs.first.time)} · '
-            '${logs.first.fileCount} 个文件';
+            '发送 ${logs.first.sentCount} / 接收 ${logs.first.receivedCount}';
 
     return Center(
       child: ConstrainedBox(

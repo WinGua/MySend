@@ -15,7 +15,7 @@ class AppConstants {
   static const String appTag = 'mysend';
 
   /// 当前应用版本（与 pubspec.yaml 的 version 保持一致，用于检查更新）。
-  static const String currentVersion = '1.0.0';
+  static const String currentVersion = '2.0.0';
 
   /// 可接受的最低对端版本。
   static const int minPeer = 1;

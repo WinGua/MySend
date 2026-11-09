@@ -6,6 +6,7 @@ import '../../core/utils.dart';
 import '../../models/device_info.dart';
 import '../../models/file_entry.dart';
 import '../../models/sync_mapping.dart';
+import 'protocol.dart';
 
 /// 协议层可预期的错误（状态码 + 错误码 + 可展示信息）。
 class TransferException implements Exception {
@@ -229,19 +230,9 @@ class PeerClient {
 
   // ---- 日志与断开 ----
 
-  Future<void> sendLog({
-    required String name,
-    required int fileCount,
-    required int totalBytes,
-    required List<String> files,
-  }) async {
+  Future<void> sendLog(SyncLogReport report) async {
     final req = await _open('POST', '/v2/log');
-    final bytes = utf8.encode(jsonEncode({
-      'name': name,
-      'count': fileCount,
-      'bytes': totalBytes,
-      'files': files,
-    }));
+    final bytes = utf8.encode(jsonEncode(report.toJson()));
     req.headers.contentType = ContentType('application', 'json', charset: 'utf-8');
     req.contentLength = bytes.length;
     req.add(bytes);
@@ -319,6 +310,9 @@ class PeerClient {
     }
     if (code == 'FILE_NOT_FOUND') {
       return TransferException(404, code, raw.isEmpty ? '对端文件已不存在' : raw);
+    }
+    if (code == 'ALREADY_EXISTS') {
+      return TransferException(409, code, raw.isEmpty ? '目标文件已存在' : raw);
     }
     if (code == 'MAPPING_NOT_FOUND' || status == 404) {
       return TransferException(404, code, raw.isEmpty ? '对端不存在该映射' : raw);

@@ -5,11 +5,12 @@ import '../../core/utils.dart';
 import '../../storage/sync_log_repository.dart';
 import '../widgets/glass.dart';
 
+const _accent = Color(0xFF4A9EFF);
 const _success = Color(0xFF7BE0A0);
 const _muted = Color(0xFF8A8A8A);
 const _muted2 = Color(0xFF9A9A9A);
 
-/// 同步日志页：展示每次同步任务的时间、文件数与总大小，保留最近 7 天。
+/// 同步日志页：展示每次同步任务的时间、发送/接收文件数与大小，保留最近 7 天。
 class SyncLogPage extends StatefulWidget {
   const SyncLogPage({super.key});
 
@@ -18,7 +19,7 @@ class SyncLogPage extends StatefulWidget {
 }
 
 class _SyncLogPageState extends State<SyncLogPage> {
-  final Set<int> _expanded = {};
+  final Set<String> _expanded = {};
 
   @override
   void initState() {
@@ -118,8 +119,7 @@ class _SyncLogPageState extends State<SyncLogPage> {
                         itemCount: entries.length,
                         separatorBuilder: (_, __) =>
                             const SizedBox(height: 8),
-                        itemBuilder: (context, i) =>
-                            _logCard(entries[i], i),
+                        itemBuilder: (context, i) => _logCard(entries[i]),
                       ),
               ),
             ],
@@ -129,8 +129,10 @@ class _SyncLogPageState extends State<SyncLogPage> {
     );
   }
 
-  Widget _logCard(SyncLogEntry e, int index) {
-    final expanded = _expanded.contains(index);
+  Widget _logCard(SyncLogEntry e) {
+    final key = '${e.time.millisecondsSinceEpoch}|${e.mappingName}';
+    final expanded = _expanded.contains(key);
+    final hasFiles = e.sentFiles.isNotEmpty || e.receivedFiles.isNotEmpty;
     return GlassCard(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -146,15 +148,32 @@ class _SyncLogPageState extends State<SyncLogPage> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              StatusPill(label: '${e.fileCount} 个文件', color: _success),
+              if (e.sentCount > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: StatusPill(
+                    label: '发出 ${e.sentCount}',
+                    color: _accent,
+                  ),
+                ),
+              if (e.receivedCount > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: StatusPill(
+                    label: '接收 ${e.receivedCount}',
+                    color: _success,
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 6),
           Text(
-            '${_fmtTime(e.time)} · ${formatBytes(e.totalBytes)}',
+            _summary(e),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 11, color: _muted),
           ),
-          if (e.files.isNotEmpty) ...[
+          if (hasFiles) ...[
             const SizedBox(height: 8),
             Row(
               children: [
@@ -166,9 +185,9 @@ class _SyncLogPageState extends State<SyncLogPage> {
                 Button(
                   onPressed: () => setState(() {
                     if (expanded) {
-                      _expanded.remove(index);
+                      _expanded.remove(key);
                     } else {
-                      _expanded.add(index);
+                      _expanded.add(key);
                     }
                   }),
                   child: Text(
@@ -190,16 +209,17 @@ class _SyncLogPageState extends State<SyncLogPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (final f in e.files)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: Text(
-                          '· $f',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 11, color: Color(0xFFE6E6E6)),
-                        ),
+                    if (e.sentFiles.isNotEmpty)
+                      _fileGroup(
+                        '已发送 · ${e.sentFiles.length} 个',
+                        e.sentFiles,
+                      ),
+                    if (e.sentFiles.isNotEmpty && e.receivedFiles.isNotEmpty)
+                      const SizedBox(height: 8),
+                    if (e.receivedFiles.isNotEmpty)
+                      _fileGroup(
+                        '已接收 · ${e.receivedFiles.length} 个',
+                        e.receivedFiles,
                       ),
                   ],
                 ),
@@ -209,6 +229,38 @@ class _SyncLogPageState extends State<SyncLogPage> {
         ],
       ),
     );
+  }
+
+  Widget _fileGroup(String title, List<String> files) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 11, color: _muted2),
+        ),
+        const SizedBox(height: 3),
+        for (final f in files)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              '· $f',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 11, color: Color(0xFFE6E6E6)),
+            ),
+          ),
+      ],
+    );
+  }
+
+  static String _summary(SyncLogEntry e) {
+    final parts = <String>[_fmtTime(e.time)];
+    if (e.peerName.isNotEmpty) parts.add('对端 ${e.peerName}');
+    if (e.sentCount > 0) parts.add('发送 ${formatBytes(e.sentBytes)}');
+    if (e.receivedCount > 0) parts.add('接收 ${formatBytes(e.receivedBytes)}');
+    return parts.join(' · ');
   }
 
   static String _fmtTime(DateTime t) {

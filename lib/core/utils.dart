@@ -33,7 +33,7 @@ bool get isWindows => !kIsWeb && Platform.isWindows;
 /// 是否运行在 Android 端。
 bool get isAndroid => !kIsWeb && Platform.isAndroid;
 
-/// 当前设备角色：PC 为发送端，Android 为接收端。
+/// 当前设备角色：Windows 为电脑端，Android 为移动端。
 bool get isSender => isWindows;
 
 /// 设备形态：桌面 / 平板 / 手机（平板按最短边 ≥ 600dp 判定）。
