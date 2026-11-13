@@ -6,6 +6,16 @@ on:
       - 'main'
     tags:
       - 'v*'
+    # 仅当影响应用产物的文件变更时才构建；文档、图片说明等不会触发。
+    # 路径过滤不作用于 tag push，打标签发版不受影响。
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'windows/**'
+      - 'test/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'analysis_options.yaml'
   workflow_dispatch:
 
 jobs:

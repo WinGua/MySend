@@ -1,10 +1,21 @@
-# MySend
+<p align="center">
+  <img src="assets/icons/source.png" width="110" alt="MySend" />
+</p>
 
-局域网双向文件同步工具：Windows 电脑与 Android 手机 / 平板之间，按映射**互补新增**文件。
-一套 Flutter 代码同时构建 Windows 与 Android 端，两端功能与同步逻辑保持一致。
+<h1 align="center">MySend</h1>
 
-电脑和手机都可以作为发起方：点击「对比」扫描两端各自的新增文件，点击「同步」时先发送本机新增，
-再自动接收对端新增。适合音乐、照片、文档等双向往来的场景。
+<p align="center">局域网双向文件同步工具：Windows 电脑与 Android 手机 / 平板之间，按映射<strong>互补新增</strong>文件。<br />
+一套 Flutter 代码同时构建 Windows 与 Android 端，两端功能与同步逻辑保持一致。</p>
+
+<p align="center">电脑和手机都可以作为发起方：点击「对比」扫描两端各自的新增文件，点击「同步」时先发送本机新增，再自动接收对端新增。适合音乐、照片、文档等双向往来的场景。</p>
+
+<p align="center">
+  <a href="https://github.com/WinGua/MySend/releases/latest"><img src="https://img.shields.io/github/v/release/WinGua/MySend?label=release" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0" />
+  <img src="https://img.shields.io/badge/platform-Windows-0078D6" alt="Platform: Windows" />
+  <img src="https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white" alt="Platform: Android" />
+  <img src="https://img.shields.io/badge/Flutter-3.24-02569B?logo=flutter&logoColor=white" alt="Flutter" />
+</p>
 
 > 当前版本：**2.0.0**（双向同步）
 
