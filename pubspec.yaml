@@ -53,6 +53,7 @@ flutter:
     - assets/native-third-party-notices.txt
     - assets/security/symbols.tsv
     - assets/security/NOTICE.txt
+    - assets/security/LICENSE-APACHE
   fonts:
     - family: MySendPairingSymbols
       fonts:

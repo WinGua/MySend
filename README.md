@@ -101,7 +101,7 @@
 
 ## 已知限制
 
-- **首次配对信任**：UDP 发现信息未经认证，首次配对需在接收端确认，并可核对两端的 16 个图标或证书指纹。图标编码参考 [LocalSend](https://github.com/localsend/localsend)，图标字典及字体许可见 [NOTICE](assets/security/NOTICE.txt)。配对时验证私钥签名，后续连接拒绝证书变化；未使用双向 TLS 客户端证书认证。
+- **首次配对信任**：UDP 发现信息未经认证，首次配对需在接收端确认，“核对密钥”支持对照两端的 16 个图标或证书指纹。图标编码参考 [LocalSend](https://github.com/localsend/localsend)，图标字典及字体许可见 [NOTICE](assets/security/NOTICE.txt)。配对时验证私钥签名，后续连接拒绝证书变化；未使用双向 TLS 客户端证书认证。
 - **Windows 可执行文件未签名**，首次运行可能触发 SmartScreen，选择「更多信息 → 仍要运行」。
 - **APK 使用固定 release 签名**：包名为 `com.wingua.mysend`，`1.x` 与 `2.x` 可覆盖升级；更早的 `com.example.music_sync` 需要卸载后重装。
 - **Android 端需要「所有文件访问」权限**才能直接写入真实目录；如需上架 Google Play，需要改用 SAF。

@@ -24,3 +24,6 @@ key.properties
 # Generated native transport libraries
 /native/transport/target/
 /android/app/src/main/jniLibs/
+
+# Generated from pinned Cargo sources during builds
+/assets/native-third-party-notices.txt

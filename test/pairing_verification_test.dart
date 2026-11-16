@@ -40,7 +40,12 @@ void main() {
     expect(rows.toSet().length, rows.length);
     // The plugin checkout is optional in standalone CI.
     if (await plugin.exists()) {
-      for (final name in ['symbols.tsv', 'pairing-symbols.otf', 'NOTICE.txt']) {
+      for (final name in [
+        'symbols.tsv',
+        'pairing-symbols.otf',
+        'NOTICE.txt',
+        'LICENSE-APACHE'
+      ]) {
         expect(await File('${here.path}/$name').readAsBytes(),
             await File('${plugin.path}/$name').readAsBytes(),
             reason: name);

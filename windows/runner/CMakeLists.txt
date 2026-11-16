@@ -41,9 +41,13 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
 # Build and bundle the same TLS data plane used on Android.
+find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
 set(TRANSPORT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../native/transport")
 add_custom_target(mysend_native_transport
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../../tool/generate_notices.py"
   COMMAND cargo build --manifest-path "${TRANSPORT_DIR}/Cargo.toml" --locked --release
   WORKING_DIRECTORY "${TRANSPORT_DIR}"
   VERBATIM)
 add_dependencies(${BINARY_NAME} mysend_native_transport)
+
+add_dependencies(flutter_assemble mysend_native_transport)

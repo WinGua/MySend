@@ -138,7 +138,7 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (ctx) => SingleChildScrollView(
           child: GlassDialog(
-        title: '与「${device.name}」核对图标',
+        title: '与「${device.name}」核对密钥',
         content: PairingVerificationView(
             verification: PairingVerification(local, device.fingerprint)),
         actions: [
@@ -669,7 +669,7 @@ class _HomePageState extends State<HomePage> {
             if (RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(d.fingerprint)) ...[
               Button(
                   onPressed: () => _verify(d),
-                  child: const Text('核对图标', style: TextStyle(fontSize: 12))),
+                  child: const Text('核对密钥', style: TextStyle(fontSize: 12))),
               const SizedBox(width: 8),
             ],
             if (!connected &&

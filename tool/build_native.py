@@ -14,6 +14,7 @@ TARGETS = {
 }
 if sys.argv[1:] != ['android']:
     raise SystemExit('Usage: python3 tool/build_native.py android')
+subprocess.run([sys.executable, str(ROOT / 'tool' / 'generate_notices.py')], check=True)
 sdk = Path(os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT') or '')
 ndk = Path(os.environ.get('ANDROID_NDK_HOME') or sdk / 'ndk' / '26.1.10909125')
 host = 'darwin-x86_64' if sys.platform == 'darwin' else 'linux-x86_64'

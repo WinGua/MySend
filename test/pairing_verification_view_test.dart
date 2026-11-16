@@ -18,7 +18,7 @@ void main() {
         child: Center(
             child: SingleChildScrollView(
                 child: GlassDialog(
-          title: '核对图标',
+          title: '核对密钥',
           content: PairingVerificationView(verification: verification),
           actions: [Button(onPressed: () {}, child: const Text('关闭'))],
         ))),

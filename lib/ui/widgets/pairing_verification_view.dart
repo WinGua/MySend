@@ -25,7 +25,7 @@ class _PairingVerificationViewState extends State<PairingVerificationView> {
   Widget build(BuildContext context) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('请在另一台设备打开“核对图标”，按从左到右、从上到下的顺序核对。'),
+          const Text('请在另一台设备打开“核对密钥”，按从左到右、从上到下的顺序核对。'),
           const SizedBox(height: 12),
           Directionality(
             textDirection: TextDirection.ltr,
