@@ -10,6 +10,7 @@ add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
   "utils.cpp"
+  "windows_privileges.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
@@ -33,8 +34,20 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
-target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "shell32.lib" "advapi32.lib" "ole32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# Build and bundle the same TLS data plane used on Android.
+find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+set(TRANSPORT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../native/transport")
+add_custom_target(mysend_native_transport
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../../tool/generate_notices.py"
+  COMMAND cargo build --manifest-path "${TRANSPORT_DIR}/Cargo.toml" --locked --release
+  WORKING_DIRECTORY "${TRANSPORT_DIR}"
+  VERBATIM)
+add_dependencies(${BINARY_NAME} mysend_native_transport)
+
+add_dependencies(flutter_assemble mysend_native_transport)

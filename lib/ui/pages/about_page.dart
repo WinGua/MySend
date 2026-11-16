@@ -122,7 +122,7 @@ class AboutPage extends StatelessWidget {
           _line('平台', 'Windows / Android 双端'),
           _line('传输协议', 'v2 · 会话鉴权 / 断点续传'),
           _line('发现端口', '${AppConstants.discoveryPort}/udp'),
-          _line('传输端口', '默认 ${AppConstants.transferPort}/http'),
+          _line('传输端口', '默认 ${AppConstants.transferPort}/https'),
           _line('日志保留', '7 天'),
         ],
       ),
@@ -160,8 +160,8 @@ class AboutPage extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            '当前使用局域网明文 HTTP 传输，未启用 TLS 加密，'
-            '建议仅在可信的家庭或办公网络内使用。应用不会上传任何文件到互联网。',
+            '当前通过 HTTPS 加密传输，并校验已配对设备的证书指纹。'
+            '首次配对应在可信网络内完成。应用不会上传任何文件到互联网。',
             style: TextStyle(fontSize: 12, height: 1.7, color: _body),
           ),
           const SizedBox(height: 14),

@@ -1,12 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/animation.dart' show AnimationController;
-import 'package:flutter/foundation.dart' show ValueNotifier, debugPrint;
-import 'package:flutter/widgets.dart'
-    show
-        AnimatedBuilder,
-        SingleTickerProviderStateMixin,
-        ValueListenableBuilder;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -20,7 +13,10 @@ import '../../platform/permissions.dart';
 import '../../services/local_index_service.dart';
 import '../../services/sync_engine.dart';
 import '../../services/transfer/protocol.dart';
+import '../../services/transfer/pairing_verification.dart';
 import '../widgets/glass.dart';
+import '../widgets/pairing_verification_view.dart';
+import '../widgets/sync_dialog.dart';
 
 const _accent = Color(0xFF4A9EFF);
 const _success = Color(0xFF7BE0A0);
@@ -123,7 +119,8 @@ class _HomePageState extends State<HomePage> {
       setState(() => _peer = linked);
       await _showConnectResult(linked, ok: true);
     } else {
-      await _showConnectResult(d, ok: false);
+      _toast(scope.connectionError ?? '连接失败，请检查两端版本和网络',
+          severity: InfoBarSeverity.error);
     }
   }
 
@@ -132,6 +129,43 @@ class _HomePageState extends State<HomePage> {
       setState(() => _peer = null);
     }
     await scope.disconnect(d);
+  }
+
+  Future<void> _verify(PeerDevice device) async {
+    final local = scope.identityFingerprint;
+    if (local == null || device.fingerprint.isEmpty) return;
+    await showGlassDialog<void>(
+      context: context,
+      builder: (ctx) => SingleChildScrollView(
+          child: GlassDialog(
+        title: '与「${device.name}」核对密钥',
+        content: PairingVerificationView(
+            verification: PairingVerification(local, device.fingerprint)),
+        actions: [
+          Button(onPressed: () => Navigator.pop(ctx), child: const Text('关闭'))
+        ],
+      )),
+    );
+  }
+
+  Future<void> _forget(PeerDevice device) async {
+    final confirmed = await showGlassDialog<bool>(
+      context: context,
+      builder: (ctx) => GlassDialog(
+        title: '忘记设备身份',
+        content: Text('忘记「${device.name}」的证书记录？下次连接将重新信任其身份。'
+            '请仅在确认对端已重装或主动更换证书时使用。'),
+        actions: [
+          Button(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('忘记')),
+        ],
+      ),
+    );
+    if (confirmed == true) await scope.forgetPeer(device.id);
   }
 
   Future<bool> _checkFileAccess() async {
@@ -303,16 +337,21 @@ class _HomePageState extends State<HomePage> {
     Future<SyncResult> runIt(
       void Function(int done, int total, FileEntry current, SyncDirection dir)
           onProgress,
+      void Function(int bytes) onBytes,
+      void Function(SyncByteProgress progress) onTransferProgress,
     ) async {
       final client = scope.clientFor(peer);
-      final localServer = scope.transferServer;
-      localServer?.busy = true;
+      final localServer = scope.server;
+      if (localServer == null) throw StateError('本机同步服务未启动');
       try {
         final result = await SyncEngine.runBidirectional(
           mapping: m,
           client: client,
+          localServer: localServer,
           plan: plan,
           localRoot: m.localRoot(isSender),
+          onTransferBytes: onBytes,
+          onTransferProgress: onTransferProgress,
           onProgress: (done, total, current, direction) {
             if (direction == SyncDirection.push) {
               sentNames.add(current.relativePath.split('/').last);
@@ -343,7 +382,6 @@ class _HomePageState extends State<HomePage> {
         );
         return result;
       } finally {
-        localServer?.busy = false;
         client.close();
       }
     }
@@ -356,7 +394,9 @@ class _HomePageState extends State<HomePage> {
     final result = await showGlassDialog<SyncResult>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _SyncDialog(
+      builder: (_) => SyncDialog(
+        incoming: scope.remoteSync,
+        cancel: scope.cancelCurrentSync,
         mappingName: m.name,
         failures: failures,
         run: runIt,
@@ -626,6 +666,20 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             const SizedBox(width: 8),
+            if (RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(d.fingerprint)) ...[
+              Button(
+                  onPressed: () => _verify(d),
+                  child: const Text('核对密钥', style: TextStyle(fontSize: 12))),
+              const SizedBox(width: 8),
+            ],
+            if (!connected &&
+                !busy &&
+                scope.config.config.trustedFingerprints.containsKey(d.id)) ...[
+              Button(
+                  onPressed: () => _forget(d),
+                  child: const Text('忘记', style: TextStyle(fontSize: 12))),
+              const SizedBox(width: 8),
+            ],
             if (busy)
               const SizedBox(
                 width: 18,
@@ -880,227 +934,6 @@ class _SearchingIndicatorState extends State<_SearchingIndicator>
   }
 }
 
-class _SyncProgress {
-  final int done;
-  final int total;
-  final int sentCount;
-  final int receivedCount;
-  final int sentBytes;
-  final int receivedBytes;
-  final String currentName;
-  final SyncDirection? direction;
-
-  const _SyncProgress({
-    this.done = 0,
-    this.total = 0,
-    this.sentCount = 0,
-    this.receivedCount = 0,
-    this.sentBytes = 0,
-    this.receivedBytes = 0,
-    this.currentName = '',
-    this.direction,
-  });
-
-  int get totalBytes => sentBytes + receivedBytes;
-}
-
-/// 同步进度弹窗：总进度 + 发送/接收分项 + 当前文件 + 速度，完成后需手动关闭。
-class _SyncDialog extends StatefulWidget {
-  final String mappingName;
-
-  /// 同步过程中收集到的失败原因（最多 20 条），由调用方持有。
-  final List<String> failures;
-  final Future<SyncResult> Function(
-    void Function(int done, int total, FileEntry current, SyncDirection dir)
-        onProgress,
-  ) run;
-
-  const _SyncDialog({
-    required this.mappingName,
-    required this.failures,
-    required this.run,
-  });
-
-  @override
-  State<_SyncDialog> createState() => _SyncDialogState();
-}
-
-class _SyncDialogState extends State<_SyncDialog> {
-  final ValueNotifier<_SyncProgress> _progress =
-      ValueNotifier(const _SyncProgress());
-  bool _running = true;
-  String? _error;
-  SyncResult? _result;
-  final Stopwatch _watch = Stopwatch();
-
-  @override
-  void initState() {
-    super.initState();
-    _watch.start();
-    _start();
-  }
-
-  @override
-  void dispose() {
-    _progress.dispose();
-    super.dispose();
-  }
-
-  Future<void> _start() async {
-    try {
-      final result = await widget.run((done, total, current, direction) {
-        if (!mounted) return;
-        final p = _progress.value;
-        final pushing = direction == SyncDirection.push;
-        _progress.value = _SyncProgress(
-          done: done,
-          total: total,
-          sentCount: p.sentCount + (pushing ? 1 : 0),
-          receivedCount: p.receivedCount + (pushing ? 0 : 1),
-          sentBytes: p.sentBytes + (pushing ? current.size : 0),
-          receivedBytes: p.receivedBytes + (pushing ? 0 : current.size),
-          currentName: current.relativePath.split('/').last,
-          direction: direction,
-        );
-      });
-      if (mounted) {
-        setState(() {
-          _running = false;
-          _result = result;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _running = false;
-          _error = '$e';
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final finished = !_running;
-    final err = _error;
-    final failed = _result?.failed ?? 0;
-    final title = finished
-        ? (err != null
-            ? '同步失败'
-            : failed > 0
-                ? '同步完成（部分失败）'
-                : '同步完成')
-        : '同步中 · ${widget.mappingName}';
-
-    return GlassDialog(
-      title: title,
-      maxWidth: 400,
-      content: SizedBox(
-        width: 360,
-        child: err != null
-            ? Text(
-                '同步失败，请重试。\n$err',
-                style: const TextStyle(fontSize: 13, color: _danger),
-              )
-            : ValueListenableBuilder<_SyncProgress>(
-                valueListenable: _progress,
-                builder: (context, p, _) {
-                  final fraction = p.total == 0
-                      ? 0.0
-                      : (p.done / p.total).clamp(0.0, 1.0).toDouble();
-                  final seconds = _watch.elapsedMilliseconds / 1000.0;
-                  final speed = seconds <= 0 ? 0.0 : p.totalBytes / seconds;
-                  final dirLabel = p.direction == SyncDirection.push
-                      ? '发送'
-                      : p.direction == SyncDirection.pull
-                          ? '接收'
-                          : '';
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      GlassProgressBar(
-                        value: finished && err == null ? 1.0 : fraction,
-                        height: 16,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        '${(fraction * 100).toStringAsFixed(0)}% · '
-                        '${p.done}/${p.total} 个文件',
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '已发送 ${p.sentCount} · 已接收 ${p.receivedCount}',
-                        style: const TextStyle(fontSize: 11, color: _muted),
-                      ),
-                      if (!finished && p.currentName.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          '当前：${dirLabel.isEmpty ? '' : '$dirLabel '}'
-                          '${p.currentName}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 11, color: _muted),
-                        ),
-                      ],
-                      const SizedBox(height: 4),
-                      Text(
-                        '发送 ${formatBytes(p.sentBytes)} · '
-                        '接收 ${formatBytes(p.receivedBytes)}',
-                        style: const TextStyle(fontSize: 11, color: _muted),
-                      ),
-                      if (finished && failed > 0) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          '$failed 个文件失败，请重新对比后重试',
-                          style: const TextStyle(fontSize: 11, color: _warning),
-                        ),
-                      ],
-                      if (finished && widget.failures.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        for (final f in widget.failures.take(3))
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
-                            child: Text(
-                              '· $f',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style:
-                                  const TextStyle(fontSize: 11, color: _danger),
-                            ),
-                          ),
-                        if (widget.failures.length > 3)
-                          Text(
-                            '…等 ${widget.failures.length} 项',
-                            style: const TextStyle(fontSize: 11, color: _danger),
-                          ),
-                      ],
-                      if (!finished && speed > 0) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          '速度 ${formatBytes(speed.round())}/s',
-                          style: const TextStyle(fontSize: 11, color: _muted),
-                        ),
-                      ],
-                    ],
-                  );
-                },
-              ),
-      ),
-      actions: [
-        if (finished)
-          FilledButton(
-            child: const Text('关闭'),
-            onPressed: () =>
-                Navigator.pop(context, err == null ? _result : null),
-          ),
-      ],
-    );
-  }
-}
-
 /// 连接状态自动提示：无按钮，约 1.3 秒后自动关闭，不显示 IP。
 class _ConnectToast extends StatefulWidget {
   final PeerDevice d;
@@ -1119,7 +952,13 @@ class _ConnectToastState extends State<_ConnectToast> {
   void initState() {
     super.initState();
     _timer = Timer(const Duration(milliseconds: 1300), () {
-      if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route == null || route.isCurrent) {
+        Navigator.pop(context);
+      } else {
+        Navigator.of(context).removeRoute(route);
+      }
     });
   }
 

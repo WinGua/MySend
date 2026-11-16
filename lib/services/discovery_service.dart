@@ -13,6 +13,7 @@ import '../models/device_info.dart';
 /// - 只接受 `proto == 2` 且角色为对端的设备
 /// - 向 255.255.255.255 与每个网卡的定向广播地址各发一份
 class DiscoveryService extends ChangeNotifier {
+  final String fingerprint;
   final String deviceId;
   final String deviceName;
   final bool isSender;
@@ -32,6 +33,7 @@ class DiscoveryService extends ChangeNotifier {
   bool _resolving = false;
 
   DiscoveryService({
+    required this.fingerprint,
     required this.deviceId,
     required this.deviceName,
     required this.isSender,
@@ -55,6 +57,7 @@ class DiscoveryService extends ChangeNotifier {
     _devices[d.id] = base.copyWith(
       connected: (base.connected || connected),
       session: d.session,
+      fingerprint: d.fingerprint,
     );
     notifyListeners();
   }
@@ -160,6 +163,7 @@ class DiscoveryService extends ChangeNotifier {
       'app': AppConstants.appTag,
       'appVersion': AppConstants.currentVersion,
       ...PeerDevice.describe(
+        fingerprint: fingerprint,
         id: deviceId,
         name: deviceName,
         role: isSender ? 'pc' : 'android',

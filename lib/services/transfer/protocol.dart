@@ -13,7 +13,6 @@ abstract class TransferServer {
 
   /// 是否有同步任务占用；占用期间拒绝新的配对请求。
   bool get busy;
-  set busy(bool value);
 
   /// 为指定设备签发本机会话 token（同一设备只保留最新一个）。
   String issueTokenFor(String deviceId);
@@ -26,6 +25,8 @@ abstract class TransferServer {
 class TokenStore {
   final Map<String, String> _tokens = {};
   final Random _random = Random.secure();
+
+  String? deviceFor(String token) => _tokens[token];
 
   bool contains(String token) => _tokens.containsKey(token);
 
@@ -73,15 +74,15 @@ bool hasProtoMismatch(HttpRequest req) {
   return int.tryParse(raw.trim()) != AppConstants.protoVersion;
 }
 
-/// 写出统一 JSON 响应，并显式关闭连接。
+/// 写出带明确长度的 JSON 响应，允许连接复用。
 ///
 /// 较大的响应体（如目录索引）在对端声明支持 gzip 时压缩后发送，
 /// Dart 的 HttpClient 默认会自动解压，客户端无需额外处理。
 void writeJson(HttpRequest req, Map<String, dynamic> body, {int status = 200}) {
   final res = req.response;
   res.statusCode = status;
-  res.headers.set(HttpHeaders.connectionHeader, 'close');
-  res.headers.contentType = ContentType('application', 'json', charset: 'utf-8');
+  res.headers.contentType =
+      ContentType('application', 'json', charset: 'utf-8');
   final bytes = utf8.encode(jsonEncode(body));
   final acceptsGzip =
       (req.headers.value(HttpHeaders.acceptEncodingHeader) ?? '')
@@ -89,8 +90,11 @@ void writeJson(HttpRequest req, Map<String, dynamic> body, {int status = 200}) {
           .contains('gzip');
   if (acceptsGzip && bytes.length > 1024) {
     res.headers.set(HttpHeaders.contentEncodingHeader, 'gzip');
-    res.add(gzip.encode(bytes));
+    final compressed = gzip.encode(bytes);
+    res.contentLength = compressed.length;
+    res.add(compressed);
   } else {
+    res.contentLength = bytes.length;
     res.add(bytes);
   }
   res.close().ignore();

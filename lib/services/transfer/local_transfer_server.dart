@@ -1,13 +1,20 @@
+import 'dart:async';
 import 'dart:io';
 
 import '../../core/constants.dart';
 import '../../core/utils.dart';
 import '../../models/device_info.dart';
+import '../../models/remote_sync_state.dart';
 import '../../models/sync_mapping.dart';
 import '../../storage/config_repository.dart';
 import '../local_index_service.dart';
 import 'part_store.dart';
+import 'pairing_proof.dart';
+import 'buffered_stream.dart';
 import 'protocol.dart';
+import 'sync_session.dart';
+import 'transfer_identity.dart';
+import 'native_transport.dart';
 
 /// 两端统一的 HTTP 服务（协议 v2）。
 ///
@@ -22,6 +29,15 @@ import 'protocol.dart';
 /// - POST /v2/log        接收对端同步日志
 /// - POST /v2/disconnect
 class LocalTransferServer implements TransferServer {
+  final TransferIdentity identity;
+  late final PairingProof _pairing = PairingProof(identity, session);
+  final Future<bool> Function(PeerDevice)? onPairRequest;
+  final void Function()? onPairRequestEnded;
+  Completer<void> _pairStop = Completer<void>();
+  bool _awaitingPairApproval = false;
+  late final SyncSession sessions;
+  final RemoteSyncTracker remoteSync;
+  Timer? _leaseSweep;
   final int preferredPort;
   final ConfigRepository config;
 
@@ -37,18 +53,24 @@ class LocalTransferServer implements TransferServer {
 
   /// 对端主动断开。
   final void Function(String deviceId) onDisconnect;
+  final Future<bool> Function(String peerId, String task)? onCancelOutbound;
 
   /// 当前是否有同步任务占用（同一设备同一时刻只允许一个任务）。
   @override
-  bool busy = false;
+  bool get busy => sessions.busy;
 
-  /// 是否有上传正在写入分片，用于拒绝并发上传。
-  bool _uploading = false;
+  /// 记录正在写入的目标：不同文件允许并发，同一文件只允许一个写入者。
+  final Set<String> _uploads = {};
 
   HttpServer? _server;
+  NativeTlsProxy? _nativeServer;
+  final Set<Future<void>> _requests = {};
+  final Map<HttpRequest, Future<void>> _dataRequests = {};
   final TokenStore _tokens = TokenStore();
 
   LocalTransferServer({
+    RemoteSyncTracker? remoteSync,
+    required this.identity,
     required this.preferredPort,
     required this.config,
     required this.isSender,
@@ -56,10 +78,15 @@ class LocalTransferServer implements TransferServer {
     required this.onPeerPaired,
     required this.onSyncLog,
     required this.onDisconnect,
-  });
+    this.onCancelOutbound,
+    this.onPairRequest,
+    this.onPairRequestEnded,
+  }) : remoteSync = remoteSync ?? RemoteSyncTracker() {
+    sessions = SyncSession(onEnded: this.remoteSync.interrupted);
+  }
 
   @override
-  int get port => _server?.port ?? preferredPort;
+  int get port => _nativeServer?.port ?? _server?.port ?? preferredPort;
 
   @override
   bool get running => _server != null;
@@ -74,28 +101,86 @@ class LocalTransferServer implements TransferServer {
 
   Future<void> start() async {
     if (_server != null) return;
-    try {
-      _server = await HttpServer.bind(InternetAddress.anyIPv4, preferredPort);
-    } catch (_) {
-      // 端口被占用时退回系统分配端口，对端通过 hello 获取实际端口。
-      _server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+    _pairStop = Completer<void>();
+    final native = NativeTransport.instance;
+    if (native != null) {
+      // Plain HTTP is private to loopback. Only the native TLS listener is advertised.
+      _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      try {
+        _nativeServer = native.server(identity.certificate, identity.privateKey,
+            _server!.port, preferredPort);
+      } catch (_) {
+        await _server!.close(force: true);
+        _server = null;
+        rethrow;
+      }
+    } else {
+      try {
+        _server = await HttpServer.bindSecure(
+            InternetAddress.anyIPv4, preferredPort, identity.context);
+      } on SocketException {
+        _server = await HttpServer.bindSecure(
+            InternetAddress.anyIPv4, 0, identity.context);
+      }
     }
-    _server!.listen(_handle);
+    _leaseSweep = Timer.periodic(const Duration(seconds: 5), (_) {
+      sessions.busy;
+    });
+    _server!.listen((req) {
+      final handling = _handle(req);
+      _requests.add(handling);
+      if (req.uri.path == '/v2/file' || req.uri.path == '/v2/upload') {
+        _dataRequests[req] = handling;
+      }
+      handling.whenComplete(() {
+        _requests.remove(handling);
+        _dataRequests.remove(req);
+      });
+    });
   }
 
   Future<void> stop() async {
+    if (!_pairStop.isCompleted) _pairStop.complete();
+    _leaseSweep?.cancel();
+    _leaseSweep = null;
+    _nativeServer?.close();
+    _nativeServer = null;
     try {
       await _server?.close(force: true);
     } catch (_) {}
+    // 关闭套接字后，仍需等文件流与落盘处理退出，才能开放新服务的同步槽位。
+    await Future.wait(_requests.toList());
     _server = null;
     _tokens.clear();
+    _pairing.clear();
+    sessions.clear();
+  }
+
+  Future<void> cancelTask(String task) async {
+    final owner = sessions.owner;
+    if (owner == null || !sessions.cancel(owner, task)) return;
+    final targets = _dataRequests.entries
+        .where((e) => e.key.headers.value('X-MySend-Sync') == task)
+        .toList();
+    for (final entry in targets) {
+      final port = entry.key.connectionInfo?.remotePort;
+      if (port != null) _nativeServer?.cancelConnection(port);
+      entry.key.response.deadline = Duration.zero;
+    }
+    await Future.wait(targets.map((e) => e.value));
+    remoteSync.interrupted(task, '同步已取消');
   }
 
   Future<void> _handle(HttpRequest req) async {
+    var entered = false;
     try {
       final path = req.uri.path;
       if (path == '/v2/hello') {
         _hello(req);
+        return;
+      }
+      if (path == '/v2/pair/challenge') {
+        await _pairChallenge(req);
         return;
       }
       if (path == '/v2/pair') {
@@ -111,6 +196,71 @@ class LocalTransferServer implements TransferServer {
       if (hasProtoMismatch(req)) {
         writeError(req, 426, 'PROTO_MISMATCH', '协议版本不一致');
         return;
+      }
+
+      final owner = _tokens.deviceFor(token)!;
+      if (path == '/v2/sync/status') {
+        final task = req.headers.value('X-MySend-Sync') ?? '';
+        if (req.method != 'POST' || !sessions.enter(owner, task)) {
+          writeError(req, 409, 'BUSY', '同步会话不存在');
+          return;
+        }
+        entered = true;
+        await _syncStatus(req, task);
+        return;
+      }
+      if (path.startsWith('/v2/sync/')) {
+        if (req.method != 'POST' || req.contentLength != 0) {
+          writeError(req, 400, 'BAD_REQUEST', '会话控制需要空 POST 请求');
+          return;
+        }
+        final task = req.uri.queryParameters['task'] ?? '';
+        switch (path) {
+          case '/v2/sync/cancel':
+            if (sessions.matches(owner, task)) {
+              await cancelTask(task);
+            } else if (!(await onCancelOutbound?.call(owner, task) ?? false)) {
+              writeError(req, 409, 'BUSY', '同步任务不存在');
+              return;
+            }
+            writeJson(req, {'ok': true});
+            return;
+          case '/v2/sync/acquire':
+            if (!sessions.acquire(owner, task)) {
+              writeError(req, 409, 'BUSY', '已有同步任务正在进行');
+            } else {
+              writeJson(req, {'ok': true});
+            }
+            return;
+          case '/v2/sync/renew':
+            if (!sessions.renew(owner, task)) {
+              writeError(req, 409, 'SESSION_EXPIRED', '同步会话已失效');
+            } else {
+              writeJson(req, {'ok': true});
+            }
+            return;
+          case '/v2/sync/release':
+            sessions.release(owner, task);
+            writeJson(req, {'ok': true});
+            return;
+        }
+      }
+      if (const {
+        '/v2/index',
+        '/v2/file',
+        '/v2/resume',
+        '/v2/resume/batch',
+        '/v2/upload'
+      }.contains(path)) {
+        final task = req.headers.value('X-MySend-Sync') ?? '';
+        if (path == '/v2/index' && task.isEmpty && !busy) {
+          // 对比允许在没有同步任务时独立执行。
+        } else if (sessions.enter(owner, task)) {
+          entered = true;
+        } else {
+          writeError(req, 409, 'BUSY', '请先取得两端同步会话，或等待当前同步完成');
+          return;
+        }
       }
 
       switch (path) {
@@ -145,7 +295,70 @@ class LocalTransferServer implements TransferServer {
       } catch (_) {
         // 响应可能已发送，忽略二次写入异常。
       }
+    } finally {
+      if (entered) sessions.leave();
     }
+  }
+
+  Future<void> _syncStatus(HttpRequest req, String task) async {
+    final body = await readJsonObject(req, maxBytes: 16 * 1024);
+    if (body == null) {
+      writeError(req, 400, 'BAD_REQUEST', '同步状态非法');
+      return;
+    }
+    int? count(String key) {
+      final v = body[key];
+      return v is int && v >= 0 && v <= 1000000000 ? v : null;
+    }
+
+    switch (body['phase']) {
+      case 'start':
+        final name = body['name'];
+        final peerName = body['peer'];
+        if (name is! String ||
+            _mapping(name) == null ||
+            peerName is! String ||
+            peerName.length > 128 ||
+            count('total') == null) {
+          writeError(req, 400, 'BAD_REQUEST', '同步计划非法');
+          return;
+        }
+        remoteSync.begin(
+            task: task,
+            peerName: peerName,
+            mappingName: name,
+            total: count('total')!);
+        break;
+      case 'plan':
+        if (!remoteSync.active(task) || count('total') == null) {
+          writeError(req, 400, 'BAD_REQUEST', '同步任务或计划非法');
+          return;
+        }
+        remoteSync.planned(task, count('total')!);
+        break;
+      case 'end':
+        if (!remoteSync.active(task) ||
+            count('sent') == null ||
+            count('received') == null ||
+            count('failed') == null ||
+            (body['error'] != null &&
+                (body['error'] is! String ||
+                    (body['error'] as String).length > 2000))) {
+          writeError(req, 400, 'BAD_REQUEST', '同步结果非法');
+          return;
+        }
+        // 报文以发起端为视角，展示前交换发送与接收。
+        remoteSync.finish(task,
+            sentCount: count('received'),
+            receivedCount: count('sent'),
+            failed: count('failed')!,
+            error: body['error'] as String?);
+        break;
+      default:
+        writeError(req, 400, 'BAD_REQUEST', '同步阶段非法');
+        return;
+    }
+    writeJson(req, {'ok': true});
   }
 
   void _hello(HttpRequest req) {
@@ -159,6 +372,9 @@ class LocalTransferServer implements TransferServer {
       'app': AppConstants.appTag,
       'version': AppConstants.currentVersion,
       'minPeer': AppConstants.minPeer,
+      'protocol': 'https',
+      'fingerprint': identity.fingerprint,
+      'capabilities': ['sync-session', 'pair-proof-v1'],
       'session': session,
       'device': {
         'id': cfg.deviceId,
@@ -168,16 +384,48 @@ class LocalTransferServer implements TransferServer {
     });
   }
 
+  Future<void> _pairChallenge(HttpRequest req) async {
+    if (req.method != 'POST' || busy) {
+      writeError(req, 409, 'BUSY', '无法开始配对');
+      return;
+    }
+    final body = await readJsonObject(req, maxBytes: 16384);
+    final id = body?['id'];
+    final fp = body?['fingerprint'];
+    if (body == null ||
+        id is! String ||
+        id.isEmpty ||
+        id.length > 128 ||
+        id == config.config.deviceId ||
+        fp is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(fp) ||
+        !['pc', 'android'].contains(body['role']) ||
+        body['role'] == _role) {
+      writeError(req, 400, 'BAD_REQUEST', '配对身份无效');
+      return;
+    }
+    final known = config.config.trustedFingerprints[id];
+    if (known != null && known != fp) {
+      writeError(req, 403, 'CERT_CHANGED', '对端证书身份已改变');
+      return;
+    }
+    writeJson(req, _pairing.issue(id, fp));
+  }
+
   Future<void> _pair(HttpRequest req) async {
+    if (req.method != 'POST') {
+      writeError(req, 405, 'BAD_REQUEST', '需要 POST 请求');
+      return;
+    }
+    if (busy) {
+      writeError(req, 409, 'BUSY', '正在同步中');
+      return;
+    }
     if (hasProtoMismatch(req)) {
       writeError(req, 426, 'PROTO_MISMATCH', '协议版本不一致');
       return;
     }
-    if (busy || _uploading) {
-      writeError(req, 409, 'BUSY', '正在同步中');
-      return;
-    }
-    final body = await readJsonObject(req);
+    final body = await readJsonObject(req, maxBytes: 32768);
     if (body == null) {
       writeError(req, 400, 'BAD_REQUEST', '请求体非法');
       return;
@@ -197,13 +445,61 @@ class LocalTransferServer implements TransferServer {
       return;
     }
 
-    final remote = req.connectionInfo?.remoteAddress.address ?? '';
+    final info = req.connectionInfo;
+    final original =
+        info == null ? '' : _nativeServer?.origin(info.remotePort) ?? '';
+    final remote =
+        original.isNotEmpty ? original : info?.remoteAddress.address ?? '';
     final requester = PeerDevice.fromHello(body, remote);
-    if (requester.id.isEmpty) {
-      writeError(req, 400, 'BAD_REQUEST', '设备 id 缺失');
+    if (requester.id.isEmpty || requester.id == config.config.deviceId) {
+      writeError(req, 400, 'BAD_REQUEST', '设备 id 缺失或与本机相同');
       return;
     }
 
+    final known = config.config.trustedFingerprints[requester.id];
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(requester.fingerprint) ||
+        (known != null && known != requester.fingerprint)) {
+      writeError(req, 403, 'CERT_CHANGED', '对端证书身份缺失或已改变');
+      return;
+    }
+    if (busy) {
+      writeError(req, 409, 'BUSY', '正在同步中');
+      return;
+    }
+    if (!_pairing.verify(body)) {
+      writeError(req, 401, 'PAIR_PROOF_REQUIRED', '配对需要有效的私钥持有证明');
+      return;
+    }
+    if (known == null) {
+      if (_awaitingPairApproval) {
+        writeError(req, 409, 'BUSY', '正在确认另一台设备');
+        return;
+      }
+      _awaitingPairApproval = true;
+      var accepted = false;
+      try {
+        accepted = await Future.any([
+          onPairRequest?.call(requester) ?? Future.value(false),
+          _pairStop.future.then((_) => false),
+        ]).timeout(const Duration(minutes: 2));
+      } on TimeoutException {
+        accepted = false;
+      } finally {
+        _awaitingPairApproval = false;
+        onPairRequestEnded?.call();
+      }
+      if (!accepted) {
+        writeError(req, 403, 'PAIR_REJECTED', '配对未获确认');
+        return;
+      }
+    }
+    final currentTrust = config.config.trustedFingerprints[requester.id];
+    if (_pairStop.isCompleted ||
+        busy ||
+        (currentTrust != null && currentTrust != requester.fingerprint)) {
+      writeError(req, 409, 'BUSY', '配对状态已变化');
+      return;
+    }
     final peerToken = body['token'] as String? ?? '';
     final token = _tokens.issueFor(requester.id);
     onPeerPaired(requester.copyWith(connected: true), peerToken);
@@ -212,6 +508,9 @@ class LocalTransferServer implements TransferServer {
     writeJson(req, {
       'ok': true,
       'token': token,
+      'protocol': 'https',
+      'fingerprint': identity.fingerprint,
+      'capabilities': ['sync-session', 'pair-proof-v1'],
       'session': session,
       'device': {
         'id': cfg.deviceId,
@@ -222,10 +521,6 @@ class LocalTransferServer implements TransferServer {
   }
 
   Future<void> _index(HttpRequest req) async {
-    if (busy || _uploading) {
-      writeError(req, 409, 'BUSY', '正在同步中');
-      return;
-    }
     final mapping = _mapping(req.uri.queryParameters['name'] ?? '');
     if (mapping == null) {
       writeError(req, 404, 'MAPPING_NOT_FOUND', '映射不存在');
@@ -247,10 +542,6 @@ class LocalTransferServer implements TransferServer {
   }
 
   Future<void> _file(HttpRequest req) async {
-    if (busy || _uploading) {
-      writeError(req, 409, 'BUSY', '正在同步中');
-      return;
-    }
     final mapping = _mapping(req.uri.queryParameters['name'] ?? '');
     if (mapping == null) {
       writeError(req, 404, 'MAPPING_NOT_FOUND', '映射不存在');
@@ -290,7 +581,6 @@ class LocalTransferServer implements TransferServer {
 
     final res = req.response;
     res.statusCode = status;
-    res.headers.set(HttpHeaders.connectionHeader, 'close');
     res.headers.contentType = ContentType('application', 'octet-stream');
     res.headers.set('Accept-Ranges', 'bytes');
     res.headers.contentLength = total - start;
@@ -300,23 +590,31 @@ class LocalTransferServer implements TransferServer {
         'bytes $start-${total - 1}/$total',
       );
     }
+    final task = req.headers.value('X-MySend-Sync') ?? '';
+    remoteSync.fileStarted(task, rel,
+        sending: true, size: total, offset: start);
+    var streamed = false;
     try {
-      await res.addStream(target.openRead(start));
+      await res.addStream(
+          readTransferFile(target, start: start, end: total).map((chunk) {
+        remoteSync.transferred(task, chunk.length, path: rel);
+        return chunk;
+      }));
+      streamed = true;
     } catch (_) {
       // 对端中断连接，忽略。
     }
     try {
       await res.close();
+      if (streamed) {
+        remoteSync.fileCompleted(task, total, sending: true, path: rel);
+      }
     } catch (_) {}
   }
 
   Future<void> _resume(HttpRequest req) async {
     if (req.method != 'GET') {
       writeError(req, 400, 'BAD_REQUEST', '方法不支持');
-      return;
-    }
-    if (busy || _uploading) {
-      writeError(req, 409, 'BUSY', '正在同步中');
       return;
     }
     final mapping = _mapping(req.uri.queryParameters['name'] ?? '');
@@ -349,10 +647,6 @@ class LocalTransferServer implements TransferServer {
   Future<void> _resumeBatch(HttpRequest req) async {
     if (req.method != 'POST') {
       writeError(req, 400, 'BAD_REQUEST', '方法不支持');
-      return;
-    }
-    if (busy || _uploading) {
-      writeError(req, 409, 'BUSY', '正在同步中');
       return;
     }
     final body = await readJsonObject(req);
@@ -419,11 +713,12 @@ class LocalTransferServer implements TransferServer {
       writeError(req, 400, 'PATH_INVALID', '路径非法');
       return;
     }
-    if (_uploading || busy) {
+    final uploadKey = Platform.isWindows ? dst.path.toLowerCase() : dst.path;
+    if (_uploads.contains(uploadKey) || _uploads.length >= 4) {
       writeError(req, 409, 'BUSY', '已有同步任务正在进行');
       return;
     }
-    _uploading = true;
+    _uploads.add(uploadKey);
 
     try {
       // 双向同步只补新增：目标已存在时绝不覆盖。
@@ -459,12 +754,19 @@ class LocalTransferServer implements TransferServer {
         PartMeta(path: rel, size: size, mtime: mtime),
       );
 
+      final task = req.headers.value('X-MySend-Sync') ?? '';
+      remoteSync.fileStarted(task, rel,
+          sending: false, size: size, offset: start);
       final sink = part.openWrite(mode: FileMode.append);
       var received = start;
       try {
         // 通过 addStream 维持背压，避免大文件写入时整段数据堆积在内存。
-        await sink.addStream(req.map((chunk) {
+        await sink.addStream(bufferedTransferStream(req.timeout(
+          const Duration(seconds: 45),
+        )).map((chunk) {
           received += chunk.length;
+          remoteSync.transferred(task, chunk.length, path: rel);
+          if (received > size) throw const FormatException('数据超出预期大小');
           return chunk;
         }));
         await sink.flush();
@@ -479,12 +781,14 @@ class LocalTransferServer implements TransferServer {
       }
 
       // 完整性以「偏移 + 最终字节数」保证：数据不完整时不会被改名到目标路径。
-      try {
-        await part.rename(dst.path);
-      } on FileSystemException {
-        // 目标已存在且平台不允许覆盖时，先删除再落盘。
-        if (await dst.exists()) await dst.delete();
-        await part.rename(dst.path);
+      if (await dst.exists()) {
+        writeError(req, 409, 'ALREADY_EXISTS', '目标文件已存在，已跳过');
+        return;
+      }
+      if (!await part.publish(rel)) {
+        await PartStore.discard(root, rel);
+        writeError(req, 409, 'ALREADY_EXISTS', '目标文件已存在，已跳过');
+        return;
       }
       if (mtime > 0) {
         try {
@@ -494,6 +798,7 @@ class LocalTransferServer implements TransferServer {
         } catch (_) {}
       }
       await PartStore.discard(root, rel);
+      remoteSync.fileCompleted(task, size, sending: false, path: rel);
       writeJson(req, {'ok': true, 'size': size});
     } catch (e) {
       if (_isNoSpace(e)) {
@@ -502,7 +807,7 @@ class LocalTransferServer implements TransferServer {
         writeError(req, 500, 'IO_ERROR', '$e');
       }
     } finally {
-      _uploading = false;
+      _uploads.remove(uploadKey);
     }
   }
 

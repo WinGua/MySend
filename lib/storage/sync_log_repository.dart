@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'app_storage.dart';
 
 import '../core/constants.dart';
 import '../core/utils.dart';
@@ -123,6 +123,9 @@ class _LogBucket {
 
 /// 同步日志仓库：持久化为本地 JSON，自动清理超 7 天的记录。
 class SyncLogRepository extends ChangeNotifier {
+  final AppStorage _storage;
+  SyncLogRepository({AppStorage? storage})
+      : _storage = storage ?? AppStorage.current;
   static const Duration _retention = Duration(days: 7);
 
   final List<SyncLogEntry> _entries = [];
@@ -133,7 +136,7 @@ class SyncLogRepository extends ChangeNotifier {
   bool get loaded => _loaded;
 
   Future<File> _file() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await _storage.directory;
     return File(p.join(dir.path, AppConstants.logFileName));
   }
 

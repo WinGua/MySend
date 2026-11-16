@@ -50,3 +50,15 @@ android {
 flutter {
     source = "../.."
 }
+
+// TLS stays native while the existing Dart protocol and UI remain unchanged.
+def nativeTransport = tasks.register("buildNativeTransport", Exec) {
+    workingDir rootProject.projectDir.parentFile
+    commandLine "python3", "tool/build_native.py", "android"
+}
+tasks.named("preBuild").configure { dependsOn nativeTransport }
+
+// Generate redistribution notices before Flutter assembles its asset bundle.
+tasks.configureEach {
+    if (name.startsWith("compileFlutterBuild")) { dependsOn nativeTransport }
+}

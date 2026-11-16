@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../../core/constants.dart';
 import '../../core/utils.dart';
+import 'safe_file.dart';
 
 /// 分片元数据，用于校验续传偏移与文件归属。
 class PartMeta {
@@ -38,20 +40,47 @@ class PartMeta {
 class PartStore {
   PartStore._();
 
+  // 创建元数据与删除空目录共用根目录锁，避免并发上传在 mkdir/write 之间失去父目录。
+  static final Map<String, Future<void>> _directoryOperations = {};
+
+  static Future<T> _withDirectory<T>(
+      String root, Future<T> Function() action) async {
+    final absolute = p.normalize(p.absolute(root));
+    final key = Platform.isWindows ? absolute.toLowerCase() : absolute;
+    final previous = _directoryOperations[key];
+    final done = Completer<void>();
+    _directoryOperations[key] = done.future;
+    try {
+      if (previous != null) await previous;
+      return await action();
+    } finally {
+      done.complete();
+      if (identical(_directoryOperations[key], done.future)) {
+        _directoryOperations.remove(key);
+      }
+    }
+  }
+
+  static Future<void> _removeEmptyDirectory(String root) async {
+    final dir = SafeDirectory(root, AppConstants.partDirName);
+    try {
+      if (await FileSystemEntity.type(dir.path, followLinks: false) ==
+          FileSystemEntityType.directory) {
+        await dir.delete(); // 非递归删除：操作系统确保非空目录不会被删除。
+      }
+    } on FileSystemException {
+      // 其他分片仍存在、目录已不存在或没有删除权限时，保留目录。
+    }
+  }
+
   static String keyFor(String relativePath) =>
       sha256Hex(utf8.encode(relativePath));
 
-  static File partFile(String root, String relativePath) => File(p.join(
-        root,
-        AppConstants.partDirName,
-        '${keyFor(relativePath)}.part',
-      ));
+  static SafeFile partFile(String root, String relativePath) => SafeFile(
+      root, '${AppConstants.partDirName}/${keyFor(relativePath)}.part');
 
-  static File metaFile(String root, String relativePath) => File(p.join(
-        root,
-        AppConstants.partDirName,
-        '${keyFor(relativePath)}.meta',
-      ));
+  static SafeFile metaFile(String root, String relativePath) => SafeFile(
+      root, '${AppConstants.partDirName}/${keyFor(relativePath)}.meta');
 
   static Future<PartMeta?> readMeta(String root, String relativePath) async {
     try {
@@ -70,19 +99,25 @@ class PartStore {
     String root,
     String relativePath,
     PartMeta meta,
-  ) async {
-    final f = metaFile(root, relativePath);
-    await f.parent.create(recursive: true);
-    await f.writeAsString(jsonEncode(meta.toJson()));
-  }
+  ) =>
+      _withDirectory(root, () async {
+        final f = metaFile(root, relativePath);
+        await f.parent.create(recursive: true);
+        await f.writeAsString(jsonEncode(meta.toJson()));
+      });
 
-  static Future<void> discard(String root, String relativePath) async {
-    for (final f in [partFile(root, relativePath), metaFile(root, relativePath)]) {
-      try {
-        if (await f.exists()) await f.delete();
-      } catch (_) {}
-    }
-  }
+  static Future<void> discard(String root, String relativePath) =>
+      _withDirectory(root, () async {
+        for (final f in [
+          partFile(root, relativePath),
+          metaFile(root, relativePath)
+        ]) {
+          try {
+            if (await f.exists()) await f.delete();
+          } catch (_) {}
+        }
+        await _removeEmptyDirectory(root);
+      });
 
   /// 返回可续传的字节偏移。
   ///
@@ -98,11 +133,7 @@ class PartStore {
     final meta = await readMeta(root, relativePath);
     if (meta == null) {
       // 无元数据的孤立分片不可信，直接清理。
-      if (await part.exists()) {
-        try {
-          await part.delete();
-        } catch (_) {}
-      }
+      if (await part.exists()) await discard(root, relativePath);
       return 0;
     }
     if (meta.path != relativePath || meta.size != size || meta.mtime != mtime) {
@@ -119,24 +150,26 @@ class PartStore {
   }
 
   /// 服务启动时清理超过保留期的分片与元数据。
-  static Future<void> cleanup(String root) async {
-    final dir = Directory(p.join(root, AppConstants.partDirName));
-    if (!await dir.exists()) return;
-    final cutoff = DateTime.now()
-        .subtract(AppConstants.partRetention)
-        .millisecondsSinceEpoch;
-    try {
-      await for (final entity in dir.list(followLinks: false)) {
-        if (entity is! File) continue;
-        final name = p.basename(entity.path);
-        if (!name.endsWith('.part') && !name.endsWith('.meta')) continue;
+  static Future<void> cleanup(String root) => _withDirectory(root, () async {
+        final dir = SafeDirectory(root, AppConstants.partDirName);
+        if (!await dir.exists()) return;
+        final cutoff = DateTime.now()
+            .subtract(AppConstants.partRetention)
+            .millisecondsSinceEpoch;
         try {
-          final stat = await entity.stat();
-          if (stat.modified.millisecondsSinceEpoch < cutoff) {
-            await entity.delete();
+          for (final entity in dir.children()) {
+            if (entity is! SafeFile) continue;
+            final name = p.basename(entity.path);
+            if (!name.endsWith('.part') && !name.endsWith('.meta')) continue;
+            try {
+              final safe = SafeFile(root, '${AppConstants.partDirName}/$name');
+              final (_, modified) = await safe.metadata();
+              if (modified < cutoff) {
+                await safe.delete();
+              }
+            } catch (_) {}
           }
         } catch (_) {}
-      }
-    } catch (_) {}
-  }
+        await _removeEmptyDirectory(root);
+      });
 }

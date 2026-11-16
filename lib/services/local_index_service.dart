@@ -3,6 +3,7 @@ import 'package:path/path.dart' as p;
 
 import '../core/utils.dart';
 import '../models/file_entry.dart';
+import 'transfer/safe_file.dart';
 
 /// 本地文件索引扫描器。
 ///
@@ -27,19 +28,27 @@ class LocalIndexService {
     final pending = <Future<void>>[];
     const maxInflight = 8;
 
-    await for (final entity in dir.list(recursive: true, followLinks: false)) {
-      if (entity is! File) continue;
-
-      final rel = toRelativePath(root, entity.path);
-      if (rel.isEmpty) continue;
-      if (_isIgnoredPath(rel)) continue; // 跳过隐藏/系统文件及隐藏目录内容
-
-      pending.add(_addEntry(entity, rel, result, () {
-        count++;
-        onProgress?.call(count);
-      }));
-      if (pending.length >= maxInflight) {
-        await pending.removeAt(0);
+    final directories = [SafeDirectory(root, '.')];
+    while (directories.isNotEmpty) {
+      final current = directories.removeLast();
+      List<FileSystemEntity> children;
+      try {
+        children = current.children();
+      } on FileSystemException {
+        continue;
+      }
+      for (final entity in children) {
+        final rel = toRelativePath(root, entity.path);
+        if (rel.isEmpty || _isIgnoredPath(rel)) continue;
+        if (entity is SafeDirectory) {
+          directories.add(entity);
+        } else if (entity is SafeFile) {
+          pending.add(_addEntry(entity, rel, result, () {
+            count++;
+            onProgress?.call(count);
+          }));
+          if (pending.length >= maxInflight) await pending.removeAt(0);
+        }
       }
     }
     await Future.wait(pending);
@@ -49,17 +58,17 @@ class LocalIndexService {
 
   /// 读取单个文件元数据并写入索引；失败时忽略，不影响整体扫描。
   static Future<void> _addEntry(
-    File file,
+    SafeFile file,
     String rel,
     Map<String, FileEntry> result,
     void Function() onCounted,
   ) async {
     try {
-      final stat = await file.stat();
+      final (size, mtime) = await file.metadata();
       result[rel] = FileEntry(
         relativePath: rel,
-        size: stat.size,
-        mtimeMs: stat.modified.millisecondsSinceEpoch,
+        size: size,
+        mtimeMs: mtime,
       );
       onCounted();
     } catch (_) {
@@ -94,6 +103,24 @@ class LocalIndexService {
     if (!isSafeWithin(root, relativePath)) {
       return null;
     }
-    return File(p.join(root, relativePath.replaceAll('/', Platform.pathSeparator)));
+    // Reject existing links early for protocol errors. Actual I/O also uses
+    // native directory handles so replacing a component after this check cannot escape.
+    var current = root;
+    try {
+      final realRoot = Directory(root).resolveSymbolicLinksSync();
+      for (final component in relativePath.split('/')) {
+        current = p.join(current, component);
+        final type = FileSystemEntity.typeSync(current, followLinks: false);
+        if (type == FileSystemEntityType.link) return null;
+        if (type == FileSystemEntityType.notFound) break;
+        final real = type == FileSystemEntityType.directory
+            ? Directory(current).resolveSymbolicLinksSync()
+            : File(current).resolveSymbolicLinksSync();
+        if (!p.isWithin(realRoot, real)) return null;
+      }
+    } on FileSystemException {
+      return null;
+    }
+    return SafeFile(root, relativePath);
   }
 }

@@ -37,23 +37,35 @@
 - **进度与日志**：实时显示当前文件、总进度、速度与收发数量；日志按发送 / 接收分列，只记录文件名，保留 7 天。
 - **后台保活**：Android 端使用前台服务，切后台或锁屏不中断接收。
 - **安全忽略**：隐藏文件、系统文件与 Office 临时文件不参与同步，并对路径做穿越校验。
-- **协议兼容**：保持 v2，兼容旧版 MySend 与 SPW-Send 模组。
+- **加密传输**：文件、索引和会话 token 均通过 HTTPS 传输，使用每次安装独立的自签名证书、SHA-256 指纹及私钥挑战校验；首次配对需确认，可核对两端图标。
+- **双端互斥**：同步前占用两端会话；同时点击时只有一个任务执行，另一端提示正在同步。
+- **双端同步弹窗**：接收端自动显示同步窗口，包含本机收发进度、当前文件、速度与结果，页面切换不影响同步状态展示。
+- **传输优化**：Android / Windows 使用原生 Rust TLS 流传输，复用连接，每个方向最多并发 4 个不同文件，使用 512 KiB 读写缓冲。
 
 ## 工作原理
 
 1. 发起端扫描本机映射目录，并拉取对端同名映射的索引（相对路径、大小、修改时间）。
 2. 按相对路径逐文件判定方向：本机有、对端无 → 发送；对端有、本机无 → 接收；两端都有 → 跳过。
-3. 点击「同步」后先发送本机新增，再接收对端新增。
-4. 传输走局域网 HTTP：发送 `/v2/upload`，接收 `/v2/file`（支持 Range 续传）；配对时双方交换会话 token，后续请求需携带。
+3. 点击「同步」后按固定设备顺序取得两端会话锁，再重新扫描差异，先发送本机新增，再接收对端新增。
+4. 传输走局域网 HTTPS：发送 `/v2/upload`，接收 `/v2/file`（支持 Range 续传）；配对时双方交换会话 token，文件请求还需携带同步任务标识。
+5. 正常完成或任务异常时释放两端会话；断网、进程退出后由租约回收空闲会话，正在处理的文件请求结束前不会释放。
 
 > 只同步对端不存在的相对路径，不比对内容、不覆盖、不删除。任一路径段以 `.` 或 `~$` 开头，或文件名为 `desktop.ini` / `thumbs.db` / `ehthumbs.db` 时忽略；两端映射名称必须一致。
 
 ## 协议与兼容
 
-传输协议保持 v2，新增能力以增量端点提供：
+协议沿用 v2 端点，通过 HTTPS 传输。同步会话负责双端互斥、状态通知与任务取消：
 
 | 端点 | 作用 |
 | --- | --- |
+| `GET /v2/hello` | 返回设备、证书指纹与能力 |
+| `POST /v2/pair/challenge` | 获取一次性身份挑战 |
+| `POST /v2/pair` | 验证私钥签名并确认首次配对，交换会话 token |
+| `POST /v2/sync/acquire` | 申请同步会话，冲突返回 409 |
+| `POST /v2/sync/renew` | 续租同步会话 |
+| `POST /v2/sync/release` | 释放同步会话 |
+| `POST /v2/sync/cancel` | 取消匹配的同步任务 |
+| `POST /v2/sync/status` | 通知同步开始、更新计划和最终结果 |
 | `GET /v2/index` | 返回本机映射目录索引 |
 | `GET /v2/file` | 提供文件下载，支持 Range 续传 |
 | `GET /v2/resume` | 查询单文件已接收偏移 |
@@ -62,8 +74,7 @@
 | `POST /v2/log` | 接收对端同步日志 |
 | `POST /v2/disconnect` | 断开配对 |
 
-- 新旧版本混用：可用的单向能力不受影响，缺失的方向会提示升级对端。
-- SPW-Send 模组继续使用 `index + upload`，不受影响。
+- MySend 与 SPW-Send 均采用 HTTPS、证书指纹校验和同步会话接口，与旧版明文协议不兼容。
 - MySend 与 SPW-Send 模组都监听 `53318`，同一台电脑上不能同时运行。
 
 ## 使用说明
@@ -72,7 +83,8 @@
 2. 在「映射」页新增映射，名称两端保持一致，各自选择本机目录。
 3. 在「状态」页连接对端设备。
 4. 点击映射的「对比」，查看「将发送」与「将接收」的文件。
-5. 点击「同步」：先发送本机新增，再接收对端新增。
+5. 点击「同步」：先发送本机新增，再接收对端新增。同一设备同一时间仅参与一个同步任务。
+6. 证书变化时拒绝连接；设备卡片的「忘记」操作清除保存的指纹，使设备能够重新配对。普通断开保留指纹记录。
 
 > 安卓端首次选择目录会请求「所有文件访问」权限，授权后才能直接写入真实路径。每次启动会自动检查一次更新，无更新或网络异常时静默跳过；也可在设置页手动检查。
 
@@ -80,7 +92,8 @@
 
 - Flutter（stable 渠道）+ [fluent_ui](https://pub.dev/packages/fluent_ui)，Windows 端使用 [window_manager](https://pub.dev/packages/window_manager) / [flutter_acrylic](https://pub.dev/packages/flutter_acrylic)。
 - 目录与权限：[file_picker](https://pub.dev/packages/file_picker) / [permission_handler](https://pub.dev/packages/permission_handler) / [path_provider](https://pub.dev/packages/path_provider)。
-- 其他：`wakelock_plus`、`crypto`、`uuid`、`url_launcher`。
+- 原生传输：Rust + rustls + Tokio，编译要求见 [原生模块说明](native/transport/README.md)。
+- 其他：`wakelock_plus`、`crypto`、`basic_utils`（证书生成）、`uuid`、`url_launcher`。
 
 ## 目录结构
 
@@ -88,13 +101,12 @@
 
 ## 已知限制
 
-- **传输为局域网明文 HTTP**，未加密，仅建议在可信网络内使用。
+- **首次配对信任**：UDP 发现信息未经认证，首次配对需在接收端确认，“核对密钥”支持对照两端的 16 个图标或证书指纹。图标编码参考 [LocalSend](https://github.com/localsend/localsend)，图标字典及字体许可见 [NOTICE](assets/security/NOTICE.txt)。配对时验证私钥签名，后续连接拒绝证书变化；未使用双向 TLS 客户端证书认证。
 - **Windows 可执行文件未签名**，首次运行可能触发 SmartScreen，选择「更多信息 → 仍要运行」。
 - **APK 使用固定 release 签名**：包名为 `com.wingua.mysend`，`1.x` 与 `2.x` 可覆盖升级；更早的 `com.example.music_sync` 需要卸载后重装。
 - **Android 端需要「所有文件访问」权限**才能直接写入真实目录；如需上架 Google Play，需要改用 SAF。
 - **后台保活**依赖前台服务常驻通知；Android 15+ 对 `dataSync` 前台服务有每日时长上限。
 - 少数国产系统（如 vivo OriginOS）对全屏 / 挖孔区域有系统级限制，可能需要在系统设置中调整顶部显示。
-- 一次同步由点击方执行；两端同时点击同步没有互斥保护，可能造成重复传输。
 
 ## 开发声明
 

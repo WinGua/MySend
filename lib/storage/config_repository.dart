@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'app_storage.dart';
 
 import '../core/constants.dart';
 import '../core/utils.dart';
@@ -10,6 +10,7 @@ import '../models/sync_mapping.dart';
 
 /// 应用配置，持久化为本地 JSON 文件。
 class AppConfig {
+  final Map<String, String> trustedFingerprints;
   String deviceId;
   String deviceName;
   int transferPort;
@@ -18,11 +19,12 @@ class AppConfig {
   List<SyncMapping> mappings;
 
   AppConfig({
+    Map<String, String>? trustedFingerprints,
     required this.deviceId,
     required this.deviceName,
     required this.transferPort,
     required this.mappings,
-  });
+  }) : trustedFingerprints = trustedFingerprints ?? {};
 
   factory AppConfig.defaults() => AppConfig(
         deviceId: newUuid(),
@@ -32,6 +34,7 @@ class AppConfig {
       );
 
   Map<String, dynamic> toJson() => {
+        'trustedFingerprints': trustedFingerprints,
         'deviceId': deviceId,
         'deviceName': deviceName,
         'transferPort': transferPort,
@@ -39,6 +42,8 @@ class AppConfig {
       };
 
   factory AppConfig.fromJson(Map<String, dynamic> j) => AppConfig(
+        trustedFingerprints:
+            Map<String, String>.from(j['trustedFingerprints'] as Map? ?? {}),
         deviceId: j['deviceId'] as String? ?? newUuid(),
         deviceName: j['deviceName'] as String? ?? '未命名设备',
         transferPort: (j['transferPort'] as num?)?.toInt() ?? AppConstants.transferPort,
@@ -50,6 +55,9 @@ class AppConfig {
 
 /// 配置仓库：负责读取 / 写入本地 JSON 配置，并在变更时通知 UI。
 class ConfigRepository extends ChangeNotifier {
+  final AppStorage _storage;
+  ConfigRepository({AppStorage? storage})
+      : _storage = storage ?? AppStorage.current;
   AppConfig _config = AppConfig.defaults();
   bool _loaded = false;
 
@@ -57,7 +65,7 @@ class ConfigRepository extends ChangeNotifier {
   bool get loaded => _loaded;
 
   Future<File> _file() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await _storage.directory;
     return File(p.join(dir.path, AppConstants.configFileName));
   }
 
