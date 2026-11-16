@@ -1,17 +1,23 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'core/utils.dart';
 import 'models/device_info.dart';
+import 'models/remote_sync_state.dart';
 import 'services/discovery_service.dart';
 import 'services/transfer/local_transfer_server.dart';
 import 'services/transfer/part_store.dart';
 import 'services/transfer/peer_client.dart';
 import 'services/transfer/protocol.dart';
+import 'services/transfer/transfer_identity.dart';
 import 'storage/config_repository.dart';
 import 'storage/sync_log_repository.dart';
 
 /// 全局服务容器：封装配置、会话、发现、收发服务与同步日志。
 class AppScope extends ChangeNotifier {
+  final RemoteSyncTracker remoteSync = RemoteSyncTracker();
   final ConfigRepository config = ConfigRepository();
   final SyncLogRepository syncLog = SyncLogRepository();
 
@@ -27,6 +33,8 @@ class AppScope extends ChangeNotifier {
 
   /// 两端统一的 HTTP 服务：同时具备发送与接收能力。
   LocalTransferServer? server;
+  TransferIdentity? _identity;
+  String? connectionError;
 
   AppScope() {
     syncLog.load();
@@ -42,7 +50,10 @@ class AppScope extends ChangeNotifier {
 
   /// 为该对端创建协议客户端，自动携带会话 token。
   PeerClient clientFor(PeerDevice d) => PeerClient(
-        peer: d,
+        identity: _identity!,
+        peer: d.copyWith(
+            fingerprint:
+                config.config.trustedFingerprints[d.id] ?? d.fingerprint),
         token: _peerTokens[d.id] ?? '',
         session: session,
         deviceId: config.config.deviceId,
@@ -54,12 +65,19 @@ class AppScope extends ChangeNotifier {
 
   /// 主动连接：配对并交换会话 token。
   Future<bool> connect(PeerDevice d) async {
+    connectionError = null;
+    if (server?.busy ?? false) {
+      connectionError = '本机正在参与同步，请等待完成后再连接';
+      return false;
+    }
     final client = clientFor(d);
     try {
       // 附带本机签发给对端的 token，让对端在配对后也能反向调用本机。
       final ownToken = server?.issueTokenFor(d.id) ?? '';
       final outcome = await client.pair(tokenToOffer: ownToken);
       _peerTokens[d.id] = outcome.token;
+      config.config.trustedFingerprints[d.id] = client.peer.fingerprint;
+      await config.save();
       final linked = d.copyWith(
         connected: true,
         session: outcome.session.isEmpty ? d.session : outcome.session,
@@ -68,6 +86,10 @@ class AppScope extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
+      connectionError = e is HandshakeException
+          ? '加密连接校验失败。请检查设备时间；若确认对端已重装，请先忘记设备再连接。'
+          : '$e';
+      server?.revokeFor(d.id);
       debugPrint('[MySend] 连接失败: $e');
       return false;
     } finally {
@@ -88,14 +110,30 @@ class AppScope extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 用户明确忘记设备后，下次连接重新信任其广播中的证书身份。
+  Future<void> forgetPeer(String deviceId) async {
+    config.config.trustedFingerprints.remove(deviceId);
+    _peerTokens.remove(deviceId);
+    transferServer?.revokeFor(deviceId);
+    discovery?.markDisconnected(deviceId);
+    await config.save();
+    notifyListeners();
+  }
+
   /// 依据当前配置（重新）启动所有后台服务。
   Future<void> startServices() async {
     await stopServices();
     _session = newSessionId();
     final cfg = config.config;
+    final support = await getApplicationSupportDirectory();
+    _identity ??= await TransferIdentity.loadOrCreate(
+      File('${support.path}/mysend_identity.json'),
+    );
 
     // 先启动 HTTP 服务，确保发现报文携带的是实际监听端口。
     final local = LocalTransferServer(
+      identity: _identity!,
+      remoteSync: remoteSync,
       preferredPort: cfg.transferPort,
       config: config,
       isSender: isSender,
@@ -109,6 +147,7 @@ class AppScope extends ChangeNotifier {
       await local.start();
     } catch (e) {
       debugPrint('[MySend] 同步服务启动失败: $e');
+      rethrow;
     }
 
     // 两端都可能接收文件，启动时都清理各自映射根下的过期分片。
@@ -120,6 +159,7 @@ class AppScope extends ChangeNotifier {
     }
 
     discovery = DiscoveryService(
+      fingerprint: _identity!.fingerprint,
       deviceId: cfg.deviceId,
       deviceName: cfg.deviceName,
       isSender: isSender,
@@ -136,6 +176,8 @@ class AppScope extends ChangeNotifier {
 
   /// 配对成功：保存对端签发给本机的 token，并把设备标记为已连接。
   void _onPeerPaired(PeerDevice peer, String peerToken) {
+    config.config.trustedFingerprints[peer.id] = peer.fingerprint;
+    config.save();
     if (peerToken.isNotEmpty) {
       _peerTokens[peer.id] = peerToken;
     }

@@ -1,5 +1,7 @@
 import 'package:fluent_ui/fluent_ui.dart';
 
+import 'app_scope.dart';
+import 'ui/widgets/remote_sync_dialog_host.dart';
 import 'ui/theme.dart';
 import 'ui/shell.dart';
 
@@ -16,7 +18,8 @@ class MySendApp extends StatelessWidget {
       theme: AppTheme.dark(),
       debugShowCheckedModeBanner: false,
       navigatorKey: appNavigatorKey,
-      home: const Shell(),
+      home: RemoteSyncDialogHost(
+          progress: scope.remoteSync, child: const Shell()),
     );
   }
 }

@@ -10,6 +10,7 @@ import '../models/sync_plan.dart';
 import 'local_index_service.dart';
 import 'transfer/part_store.dart';
 import 'transfer/peer_client.dart';
+import 'transfer/local_transfer_server.dart';
 
 /// 单个文件的传输方向（以本机视角）。
 enum SyncDirection { push, pull }
@@ -84,8 +85,78 @@ class SyncEngine {
   static Future<SyncResult> runBidirectional({
     required SyncMapping mapping,
     required PeerClient client,
+    required LocalTransferServer localServer,
     required SyncPlan plan,
     required String localRoot,
+    void Function(int bytes)? onTransferBytes,
+    required void Function(
+      int done,
+      int total,
+      FileEntry current,
+      SyncDirection direction,
+    ) onProgress,
+    void Function(FileEntry entry, SyncDirection direction, Object error)?
+        onFailure,
+  }) =>
+      client.withSyncSession(localServer, () async {
+        await client.sendSyncStatus({
+          'phase': 'start',
+          'name': mapping.name,
+          'peer': client.deviceName.length <= 128
+              ? client.deviceName
+              : client.deviceName.substring(0, 128),
+          'total': plan.totalCount,
+        });
+        try {
+          // 取得两端锁后重新扫描，接收端此时显示「准备同步」。
+          final indexes = await Future.wait([
+            LocalIndexService.scan(localRoot),
+            client.fetchIndex(mapping.name).then((files) => {
+                  for (final e in files) e.relativePath: e,
+                }),
+          ]);
+          final currentPlan = computeBidirectionalPlan(
+              mapping: mapping, local: indexes[0], remote: indexes[1]);
+          await client.sendSyncStatus(
+              {'phase': 'plan', 'total': currentPlan.totalCount});
+          final result = await _run(
+              mapping: mapping,
+              client: client,
+              plan: currentPlan,
+              localRoot: localRoot,
+              onTransferBytes: onTransferBytes,
+              onProgress: onProgress,
+              onFailure: onFailure);
+          await client.sendSyncStatus({
+            'phase': 'end',
+            'sent': result.pushed,
+            'received': result.pulled,
+            'failed': result.failed
+          });
+          return result;
+        } catch (e) {
+          final error = '$e';
+          try {
+            await client.sendSyncStatus({
+              'phase': 'end',
+              'sent': 0,
+              'received': 0,
+              'failed': 0,
+              'error': error.length <= 2000 ? error : error.substring(0, 2000)
+            });
+          } catch (_) {
+            // 无法通知时由服务端释放/租约过期事件结束接收端窗口。
+          }
+          rethrow;
+        }
+      });
+
+  static Future<SyncResult> _run({
+    required SyncMapping mapping,
+    required PeerClient client,
+    required SyncPlan plan,
+    required String localRoot,
+    void Function(int bytes)? onTransferBytes,
     required void Function(
       int done,
       int total,
@@ -121,7 +192,7 @@ class SyncEngine {
         // 对端不支持批量查询时回退为逐文件查询。
       }
 
-      for (final e in plan.toPush) {
+      await _parallel(plan.toPush, (e) async {
         try {
           await _pushOne(
             mapping,
@@ -129,6 +200,7 @@ class SyncEngine {
             e,
             localRoot,
             offsets[e.relativePath],
+            onTransferBytes,
           );
           pushed++;
           done++;
@@ -137,12 +209,12 @@ class SyncEngine {
           pushFailed++;
           onFailure?.call(e, SyncDirection.push, err);
         }
-      }
+      });
     }
 
-    for (final e in plan.toPull) {
+    await _parallel(plan.toPull, (e) async {
       try {
-        await _pullOne(mapping, client, e, localRoot);
+        await _pullOne(mapping, client, e, localRoot, onTransferBytes);
         pulled++;
         done++;
         onProgress(done, total, e, SyncDirection.pull);
@@ -150,7 +222,7 @@ class SyncEngine {
         pullFailed++;
         onFailure?.call(e, SyncDirection.pull, err);
       }
-    }
+    });
 
     return SyncResult(
       pushed: pushed,
@@ -160,6 +232,20 @@ class SyncEngine {
     );
   }
 
+  static Future<void> _parallel(
+      List<FileEntry> files, Future<void> Function(FileEntry) transfer) async {
+    var next = 0;
+    Future<void> worker() async {
+      while (next < files.length) {
+        final entry = files[next++];
+        await transfer(entry);
+      }
+    }
+
+    await Future.wait(
+        List.generate(files.length < 4 ? files.length : 4, (_) => worker()));
+  }
+
   /// 推送单个文件（含断点续传与偏移失效重试）。
   static Future<void> _pushOne(
     SyncMapping mapping,
@@ -167,6 +253,7 @@ class SyncEngine {
     FileEntry e,
     String localRoot,
     int? knownOffset,
+    void Function(int bytes)? onBytes,
   ) async {
     final srcFile = p.join(
       localRoot,
@@ -183,6 +270,7 @@ class SyncEngine {
         File(srcFile),
         mtimeMs: e.mtimeMs,
         start: start,
+        onBytes: onBytes,
       );
     } on TransferException catch (err) {
       // 目标已存在说明对端在对比后已拥有该文件，按成功跳过处理。
@@ -200,6 +288,7 @@ class SyncEngine {
         File(srcFile),
         mtimeMs: e.mtimeMs,
         start: retryStart,
+        onBytes: onBytes,
       );
     }
   }
@@ -210,12 +299,16 @@ class SyncEngine {
     PeerClient client,
     FileEntry e,
     String localRoot,
+    void Function(int bytes)? onBytes,
   ) async {
     final root = localRoot;
     final rel = e.relativePath;
     if (!isValidRelPath(rel)) {
       throw const TransferException(400, 'PATH_INVALID', '对端返回了非法路径');
     }
+    final dst = LocalIndexService.safeFile(root, rel);
+    if (dst == null) throw const TransferException(400, 'PATH_INVALID', '路径非法');
+    if (await dst.exists()) return;
     final part = PartStore.partFile(root, rel);
 
     final offset = await PartStore.currentOffset(root, rel, e.size, e.mtimeMs);
@@ -226,7 +319,7 @@ class SyncEngine {
     );
 
     if (offset < e.size) {
-      await client.download(mapping, e, part, start: offset);
+      await client.download(mapping, e, part, start: offset, onBytes: onBytes);
     } else if (!await part.exists()) {
       // 空文件不会触发下载，需显式创建 0 字节分片以便后续原子改名。
       await part.parent.create(recursive: true);
@@ -242,17 +335,9 @@ class SyncEngine {
       throw const TransferException(409, 'INCOMPLETE', '拉取数据不完整，已保留分片');
     }
 
-    final dst = LocalIndexService.safeFile(root, rel);
-    if (dst == null) {
-      throw const TransferException(400, 'PATH_INVALID', '路径非法');
-    }
     await dst.parent.create(recursive: true);
-    try {
-      await part.rename(dst.path);
-    } on FileSystemException {
-      if (await dst.exists()) await dst.delete();
-      await part.rename(dst.path);
-    }
+    if (await dst.exists()) return;
+    await part.rename(dst.path);
     if (e.mtimeMs > 0) {
       try {
         await dst.setLastModified(

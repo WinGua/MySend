@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 
 import '../../core/constants.dart';
 import '../../core/utils.dart';
@@ -7,6 +10,9 @@ import '../../models/device_info.dart';
 import '../../models/file_entry.dart';
 import '../../models/sync_mapping.dart';
 import 'protocol.dart';
+import 'buffered_stream.dart';
+import 'local_transfer_server.dart';
+import 'transfer_identity.dart';
 
 /// 协议层可预期的错误（状态码 + 错误码 + 可展示信息）。
 class TransferException implements Exception {
@@ -30,9 +36,9 @@ class PairOutcome {
 
 /// 协议 v2 统一客户端：配对、索引、上传续传、下载续传、日志、断开。
 ///
-/// 每个实例持有一个 [HttpClient]，单次任务内复用；
-/// 但每个请求都显式 `Connection: close`，避免长连接下逐文件卡顿。
+/// 文件与会话控制分别复用 TLS 连接池，最多同时传输四个不同文件。
 class PeerClient {
+  final TransferIdentity identity;
   final PeerDevice peer;
   final String token;
   final String session;
@@ -43,9 +49,13 @@ class PeerClient {
   final int localPort;
 
   final HttpClient _client;
+  final HttpClient _controlClient;
   final Duration connectTimeout;
+  String? _task;
+  Object? _leaseError;
 
   PeerClient({
+    required this.identity,
     required this.peer,
     required this.session,
     required this.deviceId,
@@ -55,11 +65,126 @@ class PeerClient {
     required this.localPort,
     this.token = '',
     this.connectTimeout = const Duration(seconds: 8),
-  }) : _client = HttpClient()..idleTimeout = const Duration(seconds: 10);
+  })  : _client = _httpClient(peer, connectTimeout, 4),
+        _controlClient = _httpClient(peer, connectTimeout, 1);
+
+  static HttpClient _httpClient(
+      PeerDevice peer, Duration timeout, int connections) {
+    final client = HttpClient(context: SecurityContext(withTrustedRoots: false))
+      ..idleTimeout = const Duration(seconds: 30)
+      ..maxConnectionsPerHost = connections
+      ..connectionTimeout = timeout;
+    client.findProxy = (_) => 'DIRECT';
+    client.badCertificateCallback = (cert, host, port) =>
+        host == peer.address &&
+        port == peer.port &&
+        sha256.convert(cert.der).toString() == peer.fingerprint &&
+        DateTime.now().isAfter(cert.startValidity) &&
+        DateTime.now().isBefore(cert.endValidity);
+    return client;
+  }
+
+  /// 按设备 id 固定顺序占用两个服务端。任一步失败都释放已占用的槽位。
+  Future<T> withSyncSession<T>(
+      LocalTransferServer local, Future<T> Function() run) async {
+    if (_task != null) throw const TransferException(409, 'BUSY', '已有同步任务正在进行');
+    final task = newSessionId();
+    _task = task;
+    var localHeld = false;
+    Timer? heartbeat;
+    Future<void>? renewing;
+    void acquireLocal() {
+      if (!local.sessions.acquire(deviceId, task)) {
+        throw const TransferException(409, 'BUSY', '本机正在参与同步，请等待完成');
+      }
+      localHeld = true;
+    }
+
+    try {
+      if (deviceId.compareTo(peer.id) < 0) {
+        acquireLocal();
+        await _sessionControl('acquire', task);
+      } else {
+        await _sessionControl('acquire', task);
+        acquireLocal();
+      }
+      heartbeat = Timer.periodic(const Duration(seconds: 10), (_) {
+        if (renewing != null) return;
+        renewing = () async {
+          try {
+            if (!local.sessions.renew(deviceId, task)) {
+              throw const TransferException(409, 'SESSION_EXPIRED', '同步会话已失效');
+            }
+            await _sessionControl('renew', task);
+          } catch (e) {
+            _leaseError = e;
+            close();
+          } finally {
+            renewing = null;
+          }
+        }();
+      });
+      final result = await run();
+      if (_leaseError != null) throw _leaseError!;
+      return result;
+    } finally {
+      heartbeat?.cancel();
+      await renewing;
+      // 独立连接清理；即使原连接损坏或申请响应丢失，也尝试释放同一个 task。
+      final cleanup = PeerClient(
+          identity: identity,
+          peer: peer,
+          token: token,
+          session: session,
+          deviceId: deviceId,
+          deviceName: deviceName,
+          role: role,
+          form: form,
+          localPort: localPort);
+      try {
+        await cleanup._sessionControl('release', task);
+      } catch (_) {
+        // 断网时由租约回收；执行中的请求仍受服务端保护。
+      } finally {
+        cleanup.close();
+      }
+      if (localHeld) local.sessions.release(deviceId, task);
+      _task = null;
+    }
+  }
+
+  Future<void> _sessionControl(String operation, String task) async {
+    final req = await _open('POST', '/v2/sync/$operation',
+        query: {'task': task}, control: true);
+    req.contentLength = 0;
+    final res = await req.close().timeout(AppConstants.controlTimeout);
+    final map = await _readJson(res);
+    if (res.statusCode == 404) {
+      throw const TransferException(426, 'UPGRADE_REQUIRED', '请升级对端以支持安全同步会话');
+    }
+    _ensureOk(res.statusCode, map);
+  }
+
+  /// 同步生命周期只走控制连接；文件进度由对端自己的收发流统计。
+  Future<void> sendSyncStatus(Map<String, dynamic> status) async {
+    if (_task == null) throw StateError('尚未取得同步会话');
+    final req = await _open('POST', '/v2/sync/status', control: true);
+    final bytes = utf8.encode(jsonEncode(status));
+    req.headers.contentType = ContentType.json;
+    req.contentLength = bytes.length;
+    req.add(bytes);
+    final res = await req.close().timeout(AppConstants.controlTimeout);
+    if (res.statusCode == 404) {
+      await res.drain<void>();
+      throw const TransferException(426, 'UPGRADE_REQUIRED', '请升级对端以支持双端同步进度');
+    }
+    _ensureOk(res.statusCode, await _readJson(res));
+  }
 
   void close() {
     try {
       _client.close(force: true);
+      _controlClient.close(force: true);
     } catch (_) {}
   }
 
@@ -69,6 +194,7 @@ class PeerClient {
     final req = await _open('POST', '/v2/pair');
     final body = jsonEncode({
       ...PeerDevice.describe(
+        fingerprint: identity.fingerprint,
         id: deviceId,
         name: deviceName,
         role: role,
@@ -81,7 +207,8 @@ class PeerClient {
       'token': tokenToOffer,
     });
     final bytes = utf8.encode(body);
-    req.headers.contentType = ContentType('application', 'json', charset: 'utf-8');
+    req.headers.contentType =
+        ContentType('application', 'json', charset: 'utf-8');
     req.contentLength = bytes.length;
     req.add(bytes);
     final res = await req.close().timeout(AppConstants.controlTimeout);
@@ -155,7 +282,8 @@ class PeerClient {
               })
           .toList(),
     }));
-    req.headers.contentType = ContentType('application', 'json', charset: 'utf-8');
+    req.headers.contentType =
+        ContentType('application', 'json', charset: 'utf-8');
     req.contentLength = bytes.length;
     req.add(bytes);
     final res = await req.close().timeout(AppConstants.indexTimeout);
@@ -177,6 +305,7 @@ class PeerClient {
     File file, {
     required int mtimeMs,
     int start = 0,
+    void Function(int bytes)? onBytes,
   }) async {
     final size = await file.length();
     final req = await _open('POST', '/v2/upload', query: {
@@ -187,7 +316,12 @@ class PeerClient {
     });
     req.headers.set('X-Offset', '$start');
     req.contentLength = size - start;
-    await req.addStream(file.openRead(start)).timeout(_fileTimeout(size));
+    await req
+        .addStream(readTransferFile(file, start: start, end: size).map((chunk) {
+          onBytes?.call(chunk.length);
+          return chunk;
+        }))
+        .timeout(_fileTimeout(size));
     final res = await req.close().timeout(_fileTimeout(size));
     final map = await _readJson(res);
     _ensureOk(res.statusCode, map);
@@ -201,6 +335,7 @@ class PeerClient {
     FileEntry entry,
     File target, {
     int start = 0,
+    void Function(int bytes)? onBytes,
   }) async {
     final req = await _open('GET', '/v2/file', query: {
       'name': mapping.name,
@@ -217,9 +352,15 @@ class PeerClient {
 
     // 仅当对端确实按 Range 返回 206 时才追加；否则从 0 覆盖，避免重复写入。
     final append = start > 0 && res.statusCode == 206;
-    final sink = target.openWrite(mode: append ? FileMode.append : FileMode.write);
+    final sink =
+        target.openWrite(mode: append ? FileMode.append : FileMode.write);
     try {
-      await sink.addStream(res.timeout(_fileTimeout(entry.size)));
+      await sink.addStream(
+          bufferedTransferStream(res.timeout(_fileTimeout(entry.size)))
+              .map((chunk) {
+        onBytes?.call(chunk.length);
+        return chunk;
+      }));
       await sink.flush();
     } finally {
       await sink.close();
@@ -233,7 +374,8 @@ class PeerClient {
   Future<void> sendLog(SyncLogReport report) async {
     final req = await _open('POST', '/v2/log');
     final bytes = utf8.encode(jsonEncode(report.toJson()));
-    req.headers.contentType = ContentType('application', 'json', charset: 'utf-8');
+    req.headers.contentType =
+        ContentType('application', 'json', charset: 'utf-8');
     req.contentLength = bytes.length;
     req.add(bytes);
     final res = await req.close().timeout(AppConstants.controlTimeout);
@@ -256,16 +398,23 @@ class PeerClient {
     String method,
     String path, {
     Map<String, String>? query,
+    bool control = false,
   }) async {
+    if (_leaseError != null) throw _leaseError!;
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(peer.fingerprint)) {
+      throw const TransferException(426, 'UPGRADE_REQUIRED', '对端不支持加密连接，请升级对端');
+    }
     final uri = Uri(
-      scheme: 'http',
+      scheme: 'https',
       host: peer.address,
       port: peer.port,
       path: path,
       queryParameters: (query == null || query.isEmpty) ? null : query,
     );
-    final req = await _client.openUrl(method, uri).timeout(connectTimeout);
-    req.headers.set(HttpHeaders.connectionHeader, 'close');
+    final transport = control ? _controlClient : _client;
+    final req = await transport.openUrl(method, uri).timeout(connectTimeout);
+    req.followRedirects = false;
+    if (_task != null) req.headers.set('X-MySend-Sync', _task!);
     req.headers.set('X-MySend-Proto', '${AppConstants.protoVersion}');
     if (token.isNotEmpty) {
       req.headers.set('X-MySend-Token', token);
@@ -331,8 +480,6 @@ class PeerClient {
     var sec = (bytes / (1024 * 1024) * 2).ceil();
     if (sec < 60) sec = 60;
     final d = Duration(seconds: sec);
-    return d > AppConstants.maxFileTimeout
-        ? AppConstants.maxFileTimeout
-        : d;
+    return d > AppConstants.maxFileTimeout ? AppConstants.maxFileTimeout : d;
   }
 }

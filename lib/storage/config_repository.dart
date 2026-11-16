@@ -10,6 +10,7 @@ import '../models/sync_mapping.dart';
 
 /// 应用配置，持久化为本地 JSON 文件。
 class AppConfig {
+  final Map<String, String> trustedFingerprints;
   String deviceId;
   String deviceName;
   int transferPort;
@@ -18,11 +19,12 @@ class AppConfig {
   List<SyncMapping> mappings;
 
   AppConfig({
+    Map<String, String>? trustedFingerprints,
     required this.deviceId,
     required this.deviceName,
     required this.transferPort,
     required this.mappings,
-  });
+  }) : trustedFingerprints = trustedFingerprints ?? {};
 
   factory AppConfig.defaults() => AppConfig(
         deviceId: newUuid(),
@@ -32,6 +34,7 @@ class AppConfig {
       );
 
   Map<String, dynamic> toJson() => {
+        'trustedFingerprints': trustedFingerprints,
         'deviceId': deviceId,
         'deviceName': deviceName,
         'transferPort': transferPort,
@@ -39,11 +42,15 @@ class AppConfig {
       };
 
   factory AppConfig.fromJson(Map<String, dynamic> j) => AppConfig(
+        trustedFingerprints:
+            Map<String, String>.from(j['trustedFingerprints'] as Map? ?? {}),
         deviceId: j['deviceId'] as String? ?? newUuid(),
         deviceName: j['deviceName'] as String? ?? '未命名设备',
-        transferPort: (j['transferPort'] as num?)?.toInt() ?? AppConstants.transferPort,
+        transferPort:
+            (j['transferPort'] as num?)?.toInt() ?? AppConstants.transferPort,
         mappings: (j['mappings'] as List<dynamic>? ?? [])
-            .map((e) => SyncMapping.fromJson(Map<String, dynamic>.from(e as Map)))
+            .map((e) =>
+                SyncMapping.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
       );
 }

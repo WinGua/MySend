@@ -2,6 +2,8 @@ import '../core/constants.dart';
 
 /// 局域网中发现的远端设备（PC 或 Android）。
 class PeerDevice {
+  final String fingerprint;
+
   final String id;
   final String name;
 
@@ -17,6 +19,7 @@ class PeerDevice {
   final bool connected; // 是否已完成配对
 
   const PeerDevice({
+    this.fingerprint = '',
     required this.id,
     required this.name,
     required this.form,
@@ -30,6 +33,7 @@ class PeerDevice {
   factory PeerDevice.fromHello(Map<String, dynamic> e, String sourceAddress) {
     final role = e['role'] as String? ?? '';
     return PeerDevice(
+      fingerprint: e['fingerprint'] as String? ?? '',
       id: e['id'] as String? ?? '',
       name: e['name'] as String? ?? '未知设备',
       form: e['form'] as String? ?? (role == 'pc' ? 'desktop' : 'phone'),
@@ -42,6 +46,7 @@ class PeerDevice {
 
   /// 描述自身设备的发现/配对报文（协议 v2 字段）。
   static Map<String, dynamic> describe({
+    String fingerprint = '',
     required String id,
     required String name,
     required String role,
@@ -50,6 +55,9 @@ class PeerDevice {
     required String session,
   }) =>
       {
+        'protocol': 'https',
+        'fingerprint': fingerprint,
+        'capabilities': ['sync-session'],
         'proto': AppConstants.protoVersion,
         'id': id,
         'name': name,
@@ -60,12 +68,14 @@ class PeerDevice {
       };
 
   PeerDevice copyWith({
+    String? fingerprint,
     bool? connected,
     String? address,
     int? port,
     String? session,
   }) =>
       PeerDevice(
+        fingerprint: fingerprint ?? this.fingerprint,
         id: id,
         name: name,
         form: form,
