@@ -34,6 +34,18 @@ class SyncResult {
   bool get success => failed == 0;
 }
 
+class SyncByteProgress {
+  final double fraction;
+  final double speed;
+  final FileEntry current;
+  final SyncDirection direction;
+  final int done;
+  final int total;
+  const SyncByteProgress(
+      this.fraction, this.speed, this.current, this.direction,
+      {required this.done, required this.total});
+}
+
 /// 同步引擎：计算双向差异、执行互补传输。
 ///
 /// 规则：
@@ -89,6 +101,7 @@ class SyncEngine {
     required SyncPlan plan,
     required String localRoot,
     void Function(int bytes)? onTransferBytes,
+    void Function(SyncByteProgress progress)? onTransferProgress,
     required void Function(
       int done,
       int total,
@@ -125,6 +138,7 @@ class SyncEngine {
               plan: currentPlan,
               localRoot: localRoot,
               onTransferBytes: onTransferBytes,
+              onTransferProgress: onTransferProgress,
               onProgress: onProgress,
               onFailure: onFailure);
           await client.sendSyncStatus({
@@ -157,6 +171,7 @@ class SyncEngine {
     required SyncPlan plan,
     required String localRoot,
     void Function(int bytes)? onTransferBytes,
+    void Function(SyncByteProgress progress)? onTransferProgress,
     required void Function(
       int done,
       int total,
@@ -172,6 +187,40 @@ class SyncEngine {
     var pulled = 0;
     var pushFailed = 0;
     var pullFailed = 0;
+    final partial = <String, double>{};
+    final clock = Stopwatch();
+    var wireBytes = 0;
+    var lastUpdate = -100;
+    void reportBytes(FileEntry entry, SyncDirection direction, int bytes,
+        {int? offset}) {
+      if (!clock.isRunning) clock.start();
+      if (offset != null) {
+        partial[entry.relativePath] = entry.size == 0 ? 0 : offset / entry.size;
+      } else {
+        wireBytes += bytes;
+        onTransferBytes?.call(bytes);
+        if (entry.size > 0) {
+          partial[entry.relativePath] =
+              ((partial[entry.relativePath] ?? 0) + bytes / entry.size)
+                  .clamp(0.0, 1.0)
+                  .toDouble();
+        }
+      }
+      if (offset != null || clock.elapsedMilliseconds - lastUpdate >= 100) {
+        lastUpdate = clock.elapsedMilliseconds;
+        final equivalent =
+            done + partial.values.fold<double>(0, (sum, value) => sum + value);
+        onTransferProgress?.call(SyncByteProgress(
+            total == 0 ? 0 : (equivalent / total).clamp(0.0, 1.0).toDouble(),
+            clock.elapsedMicroseconds == 0
+                ? 0
+                : wireBytes * 1e6 / clock.elapsedMicroseconds,
+            entry,
+            direction,
+            done: done,
+            total: total));
+      }
+    }
 
     if (plan.toPush.isNotEmpty) {
       // 先批量查询续传偏移，正常情况整批文件只需一次请求。
@@ -200,8 +249,11 @@ class SyncEngine {
             e,
             localRoot,
             offsets[e.relativePath],
-            onTransferBytes,
+            (bytes) => reportBytes(e, SyncDirection.push, bytes),
+            (offset) => reportBytes(e, SyncDirection.push, 0, offset: offset),
           );
+          reportBytes(e, SyncDirection.push, 0, offset: e.size);
+          partial.remove(e.relativePath);
           pushed++;
           done++;
           onProgress(done, total, e, SyncDirection.push);
@@ -214,7 +266,15 @@ class SyncEngine {
 
     await _parallel(plan.toPull, (e) async {
       try {
-        await _pullOne(mapping, client, e, localRoot, onTransferBytes);
+        await _pullOne(
+            mapping,
+            client,
+            e,
+            localRoot,
+            (bytes) => reportBytes(e, SyncDirection.pull, bytes),
+            (offset) => reportBytes(e, SyncDirection.pull, 0, offset: offset));
+        reportBytes(e, SyncDirection.pull, 0, offset: e.size);
+        partial.remove(e.relativePath);
         pulled++;
         done++;
         onProgress(done, total, e, SyncDirection.pull);
@@ -254,6 +314,7 @@ class SyncEngine {
     String localRoot,
     int? knownOffset,
     void Function(int bytes)? onBytes,
+    void Function(int offset)? onStarted,
   ) async {
     final srcFile = p.join(
       localRoot,
@@ -263,6 +324,7 @@ class SyncEngine {
         await client
             .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
             .timeout(AppConstants.controlTimeout);
+    onStarted?.call(start);
     try {
       await client.upload(
         mapping,
@@ -282,6 +344,7 @@ class SyncEngine {
           : await client
               .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
               .timeout(AppConstants.controlTimeout);
+      onStarted?.call(retryStart);
       await client.upload(
         mapping,
         e.relativePath,
@@ -300,6 +363,7 @@ class SyncEngine {
     FileEntry e,
     String localRoot,
     void Function(int bytes)? onBytes,
+    void Function(int offset)? onStarted,
   ) async {
     final root = localRoot;
     final rel = e.relativePath;
@@ -318,6 +382,7 @@ class SyncEngine {
       PartMeta(path: rel, size: e.size, mtime: e.mtimeMs),
     );
 
+    onStarted?.call(offset);
     if (offset < e.size) {
       await client.download(mapping, e, part, start: offset, onBytes: onBytes);
     } else if (!await part.exists()) {

@@ -456,12 +456,13 @@ class LocalTransferServer implements TransferServer {
       );
     }
     final task = req.headers.value('X-MySend-Sync') ?? '';
-    remoteSync.fileStarted(task, rel, sending: true);
+    remoteSync.fileStarted(task, rel,
+        sending: true, size: total, offset: start);
     var streamed = false;
     try {
       await res.addStream(
           readTransferFile(target, start: start, end: total).map((chunk) {
-        remoteSync.transferred(task, chunk.length);
+        remoteSync.transferred(task, chunk.length, path: rel);
         return chunk;
       }));
       streamed = true;
@@ -470,7 +471,9 @@ class LocalTransferServer implements TransferServer {
     }
     try {
       await res.close();
-      if (streamed) remoteSync.fileCompleted(task, total, sending: true);
+      if (streamed) {
+        remoteSync.fileCompleted(task, total, sending: true, path: rel);
+      }
     } catch (_) {}
   }
 
@@ -617,7 +620,8 @@ class LocalTransferServer implements TransferServer {
       );
 
       final task = req.headers.value('X-MySend-Sync') ?? '';
-      remoteSync.fileStarted(task, rel, sending: false);
+      remoteSync.fileStarted(task, rel,
+          sending: false, size: size, offset: start);
       final sink = part.openWrite(mode: FileMode.append);
       var received = start;
       try {
@@ -626,7 +630,7 @@ class LocalTransferServer implements TransferServer {
           const Duration(seconds: 45),
         )).map((chunk) {
           received += chunk.length;
-          remoteSync.transferred(task, chunk.length);
+          remoteSync.transferred(task, chunk.length, path: rel);
           if (received > size) throw const FormatException('数据超出预期大小');
           return chunk;
         }));
@@ -655,7 +659,7 @@ class LocalTransferServer implements TransferServer {
         } catch (_) {}
       }
       await PartStore.discard(root, rel);
-      remoteSync.fileCompleted(task, size, sending: false);
+      remoteSync.fileCompleted(task, size, sending: false, path: rel);
       writeJson(req, {'ok': true, 'size': size});
     } catch (e) {
       if (_isNoSpace(e)) {

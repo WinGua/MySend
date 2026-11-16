@@ -17,6 +17,8 @@ class RemoteSyncState {
   final bool preparing;
   final DateTime startedAt;
   final DateTime? finishedAt;
+  final DateTime? transferStartedAt;
+  final double inFlight;
   final String? error;
 
   const RemoteSyncState(
@@ -35,13 +37,27 @@ class RemoteSyncState {
       this.sending = false,
       this.preparing = true,
       this.finishedAt,
+      this.transferStartedAt,
+      this.inFlight = 0,
       this.error});
 
   int get done => sentCount + receivedCount;
+  double get fraction =>
+      total == 0 ? 0 : ((done + inFlight) / total).clamp(0.0, 1.0).toDouble();
+  double get speed {
+    if (transferStartedAt == null) return 0;
+    final us = (finishedAt ?? DateTime.now())
+        .difference(transferStartedAt!)
+        .inMicroseconds;
+    return us <= 0 ? 0 : transferredBytes * 1e6 / us;
+  }
+
   bool get finished => finishedAt != null;
 
   RemoteSyncState copyWith(
-          {int? total,
+          {double? inFlight,
+          DateTime? transferStartedAt,
+          int? total,
           int? sentCount,
           int? receivedCount,
           int? sentBytes,
@@ -58,6 +74,8 @@ class RemoteSyncState {
           peerName: peerName,
           mappingName: mappingName,
           startedAt: startedAt,
+          inFlight: inFlight ?? this.inFlight,
+          transferStartedAt: transferStartedAt ?? this.transferStartedAt,
           total: total ?? this.total,
           sentCount: sentCount ?? this.sentCount,
           receivedCount: receivedCount ?? this.receivedCount,
@@ -77,6 +95,9 @@ class RemoteSyncTracker extends ValueNotifier<RemoteSyncState?> {
   RemoteSyncTracker() : super(null);
   final Stopwatch _updates = Stopwatch();
   int _bytes = 0;
+  final Map<String, double> _partial = {};
+  final Map<String, int> _sizes = {};
+  double get _inFlight => _partial.values.fold(0, (sum, value) => sum + value);
 
   bool active(String task) => value?.task == task && !value!.finished;
 
@@ -87,6 +108,8 @@ class RemoteSyncTracker extends ValueNotifier<RemoteSyncState?> {
       required int total}) {
     if (value?.task == task) return;
     _bytes = 0;
+    _partial.clear();
+    _sizes.clear();
     _updates
       ..reset()
       ..start();
@@ -103,25 +126,43 @@ class RemoteSyncTracker extends ValueNotifier<RemoteSyncState?> {
     value = value!.copyWith(total: total, preparing: false);
   }
 
-  void fileStarted(String task, String path, {required bool sending}) {
+  void fileStarted(String task, String path,
+      {required bool sending, int size = 0, int offset = 0}) {
     if (!active(task)) return;
-    value =
-        value!.copyWith(currentName: path, sending: sending, preparing: false);
+    _sizes[path] = size;
+    _partial[path] = size == 0 ? 0 : (offset / size).clamp(0.0, 1.0).toDouble();
+    value = value!.copyWith(
+        currentName: path,
+        sending: sending,
+        preparing: false,
+        inFlight: _inFlight,
+        transferStartedAt: value!.transferStartedAt ?? DateTime.now());
   }
 
-  void transferred(String task, int bytes) {
+  void transferred(String task, int bytes, {String? path}) {
     if (!active(task)) return;
     _bytes += bytes;
-    if (_updates.elapsedMilliseconds >= 100) {
+    final name = path ?? value!.currentName;
+    final size = _sizes[name] ?? 0;
+    if (size > 0) {
+      _partial[name] =
+          ((_partial[name] ?? 0) + bytes / size).clamp(0.0, 1.0).toDouble();
+    }
+    if (_updates.elapsedMilliseconds >= 100 || value!.transferredBytes == 0) {
       _updates.reset();
-      value = value!.copyWith(transferredBytes: _bytes);
+      value = value!.copyWith(transferredBytes: _bytes, inFlight: _inFlight);
     }
   }
 
-  void fileCompleted(String task, int size, {required bool sending}) {
+  void fileCompleted(String task, int size,
+      {required bool sending, String? path}) {
     if (!active(task)) return;
+    final name = path ?? value!.currentName;
+    _partial.remove(name);
+    _sizes.remove(name);
     final s = value!;
     value = s.copyWith(
+        inFlight: _inFlight,
         transferredBytes: _bytes,
         sentCount: s.sentCount + (sending ? 1 : 0),
         receivedCount: s.receivedCount + (sending ? 0 : 1),

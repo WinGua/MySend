@@ -6,16 +6,40 @@ import 'package:window_manager/window_manager.dart';
 import 'app.dart';
 import 'app_scope.dart';
 import 'core/utils.dart';
+import 'core/startup_report.dart';
 
-Future<void> main() async {
+Future<void> main([List<String> args = const []]) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   scope = AppScope();
-  await scope.config.load();
-  await _initWindow();
-  await scope.startServices();
+  final report = StartupReport.fromArguments(args);
+  report?.mark('starting');
+  runApp(MySendApp(initialize: (showStage) async {
+    void stage(String name) {
+      showStage(name);
+      if (report != null) {
+        report.stage = name;
+        report.mark('initializing');
+      }
+    }
 
-  runApp(const MySendApp());
+    try {
+      stage('正在启动 · 读取配置');
+      await scope.config.load();
+      stage('正在启动 · 初始化窗口');
+      await _initWindow();
+      await scope.startServices(onStage: stage);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        report?.mark('ready', firstFrame: true);
+      });
+    } catch (error) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        report?.mark('error',
+            firstFrame: true, failure: error.runtimeType.toString());
+      });
+      rethrow;
+    }
+  }));
 }
 
 /// Windows：无边框窗口 + Mica/Acrylic 磨砂玻璃，失败则优雅回退。

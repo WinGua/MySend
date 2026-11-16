@@ -80,6 +80,18 @@ jobs:
       - name: 构建 Windows
         run: flutter build windows --release
 
+      - name: 验证 Windows release 首帧和服务启动
+        shell: pwsh
+        run: ./tool/windows_startup_smoke.ps1 -Executable build/windows/x64/runner/Release/MySend.exe
+
+      - name: 上传 Windows 启动验证记录
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows_startup_smoke
+          path: startup-smoke/*
+          if-no-files-found: ignore
+
       - name: 打包 Windows 为 zip
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath MySend-Windows-x64.zip

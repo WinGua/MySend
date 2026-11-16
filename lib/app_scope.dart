@@ -121,10 +121,11 @@ class AppScope extends ChangeNotifier {
   }
 
   /// 依据当前配置（重新）启动所有后台服务。
-  Future<void> startServices() async {
+  Future<void> startServices({ValueChanged<String>? onStage}) async {
     await stopServices();
     _session = newSessionId();
     final cfg = config.config;
+    onStage?.call('正在启动 · 读取加密身份');
     final support = await getApplicationSupportDirectory();
     _identity ??= await TransferIdentity.loadOrCreate(
       File('${support.path}/mysend_identity.json'),
@@ -143,6 +144,7 @@ class AppScope extends ChangeNotifier {
       onDisconnect: _onDisconnect,
     );
     server = local;
+    onStage?.call('正在启动 · 启动加密传输服务');
     try {
       await local.start();
     } catch (e) {
@@ -151,6 +153,7 @@ class AppScope extends ChangeNotifier {
     }
 
     // 两端都可能接收文件，启动时都清理各自映射根下的过期分片。
+    onStage?.call('正在启动 · 清理过期分片');
     for (final m in cfg.mappings) {
       final root = m.localRoot(isSender);
       if (root.isNotEmpty) {
@@ -158,6 +161,7 @@ class AppScope extends ChangeNotifier {
       }
     }
 
+    onStage?.call('正在启动 · 发现局域网设备');
     discovery = DiscoveryService(
       fingerprint: _identity!.fingerprint,
       deviceId: cfg.deviceId,

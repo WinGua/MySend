@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -6,6 +7,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mysend/models/remote_sync_state.dart';
+import 'package:mysend/models/file_entry.dart';
+import 'package:mysend/services/sync_engine.dart';
 import 'package:mysend/ui/theme.dart';
 import 'package:mysend/ui/widgets/glass.dart';
 import 'package:mysend/ui/widgets/remote_sync_dialog_host.dart';
@@ -45,6 +48,49 @@ void main() {
         ..addFont(Future.value(ByteData.sublistView(bytes)));
       await font.load();
     }
+  });
+  testWidgets('本机发起的大文件也在完成前显示25%', (tester) async {
+    final result = Completer<SyncResult>();
+    await tester.pumpWidget(FluentApp(
+        theme: testTheme(),
+        home: SyncDialog(
+            mappingName: '音乐',
+            failures: const [],
+            run: (_, onBytes, onDetails) async {
+              onDetails(const SyncByteProgress(
+                  .25,
+                  1048576,
+                  FileEntry(
+                      relativePath: 'large.bin', size: 4194304, mtimeMs: 0),
+                  SyncDirection.push,
+                  done: 0,
+                  total: 1));
+              onBytes(1048576);
+              return result.future;
+            })));
+    await tester.pump();
+    expect(find.text('25% · 0/1 个文件'), findsOneWidget);
+    result.complete(
+        const SyncResult(pushed: 1, pulled: 0, pushFailed: 0, pullFailed: 0));
+    await tester.pump();
+  });
+  testWidgets('单个大文件传到四分之一时显示25%而非0%', (tester) async {
+    final progress = RemoteSyncTracker();
+    addTearDown(progress.dispose);
+    await tester.pumpWidget(FluentApp(
+        theme: testTheme(),
+        home:
+            RemoteSyncDialogHost(progress: progress, child: const SizedBox())));
+    progress.begin(task: 'bytes', peerName: '电脑', mappingName: '音乐', total: 1);
+    progress.fileStarted('bytes', 'large.bin',
+        sending: false, size: 4 * 1024 * 1024);
+    progress.transferred('bytes', 1024 * 1024);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('25% · 0/1 个文件'), findsOneWidget);
+    expect(progress.value!.done, 0);
+    progress.finish('bytes', error: '测试结束');
+    await tester.pump();
   });
   for (final size in [const Size(390, 844), const Size(1100, 720)]) {
     testWidgets('接收弹窗自动打开、刷新并保留结果 ${size.width}', (tester) async {
@@ -122,7 +168,7 @@ void main() {
                               mappingName: '音乐',
                               failures: const [],
                               incoming: progress,
-                              run: (_, __) async {
+                              run: (_, __, ___) async {
                                 throw const TransferException(
                                     409, 'BUSY', '对端正在同步其他任务');
                               })),

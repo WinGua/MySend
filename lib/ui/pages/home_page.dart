@@ -319,6 +319,7 @@ class _HomePageState extends State<HomePage> {
       void Function(int done, int total, FileEntry current, SyncDirection dir)
           onProgress,
       void Function(int bytes) onBytes,
+      void Function(SyncByteProgress progress) onTransferProgress,
     ) async {
       final client = scope.clientFor(peer);
       final localServer = scope.server;
@@ -331,6 +332,7 @@ class _HomePageState extends State<HomePage> {
           plan: plan,
           localRoot: m.localRoot(isSender),
           onTransferBytes: onBytes,
+          onTransferProgress: onTransferProgress,
           onProgress: (done, total, current, direction) {
             if (direction == SyncDirection.push) {
               sentNames.add(current.relativePath.split('/').last);

@@ -22,6 +22,8 @@ class _SyncProgress {
   final int transferredBytes;
   final String currentName;
   final SyncDirection? direction;
+  final double? fraction;
+  final double? speed;
 
   const _SyncProgress({
     this.done = 0,
@@ -33,6 +35,8 @@ class _SyncProgress {
     this.transferredBytes = 0,
     this.currentName = '',
     this.direction,
+    this.fraction,
+    this.speed,
   });
 
   _SyncProgress withTransferredBytes(int bytes) => _SyncProgress(
@@ -45,6 +49,8 @@ class _SyncProgress {
         currentName: currentName,
         direction: direction,
         transferredBytes: bytes,
+        fraction: fraction,
+        speed: speed,
       );
 
   int get totalBytes => sentBytes + receivedBytes;
@@ -60,6 +66,7 @@ class SyncDialog extends StatefulWidget {
     void Function(int done, int total, FileEntry current, SyncDirection dir)
         onProgress,
     void Function(int bytes) onBytes,
+    void Function(SyncByteProgress progress) onTransferProgress,
   )? run;
   final ValueListenable<RemoteSyncState?>? remote;
   final ValueListenable<RemoteSyncState?>? incoming;
@@ -143,6 +150,8 @@ class _SyncDialogState extends State<SyncDialog> {
     if (state.finished) _watch.stop();
     _progress.value = _SyncProgress(
         done: state.done,
+        fraction: state.fraction,
+        speed: state.speed,
         total: state.total,
         sentCount: state.sentCount,
         receivedCount: state.receivedCount,
@@ -184,6 +193,8 @@ class _SyncDialogState extends State<SyncDialog> {
           receivedBytes: p.receivedBytes + (pushing ? 0 : current.size),
           currentName: current.relativePath.split('/').last,
           direction: direction,
+          fraction: p.fraction,
+          speed: p.speed,
         );
       }, (bytes) {
         _wireBytes += bytes;
@@ -191,6 +202,21 @@ class _SyncDialogState extends State<SyncDialog> {
           _lastByteUpdate = _watch.elapsedMilliseconds;
           _progress.value = _progress.value.withTransferredBytes(_wireBytes);
         }
+      }, (details) {
+        if (!mounted) return;
+        final p = _progress.value;
+        _progress.value = _SyncProgress(
+            done: details.done,
+            total: details.total,
+            sentCount: p.sentCount,
+            receivedCount: p.receivedCount,
+            sentBytes: p.sentBytes,
+            receivedBytes: p.receivedBytes,
+            transferredBytes: _wireBytes,
+            currentName: details.current.relativePath.split('/').last,
+            direction: details.direction,
+            fraction: details.fraction,
+            speed: details.speed);
       });
       if (mounted) {
         setState(() {
@@ -242,12 +268,13 @@ class _SyncDialogState extends State<SyncDialog> {
                 : ValueListenableBuilder<_SyncProgress>(
                     valueListenable: _progress,
                     builder: (context, p, _) {
-                      final fraction = p.total == 0
-                          ? 0.0
-                          : (p.done / p.total).clamp(0.0, 1.0).toDouble();
+                      final fraction = p.fraction ??
+                          (p.total == 0
+                              ? 0.0
+                              : (p.done / p.total).clamp(0.0, 1.0).toDouble());
                       final seconds = _watch.elapsedMilliseconds / 1000.0;
-                      final speed =
-                          seconds <= 0 ? 0.0 : p.transferredBytes / seconds;
+                      final speed = p.speed ??
+                          (seconds <= 0 ? 0.0 : p.transferredBytes / seconds);
                       final dirLabel = p.direction == SyncDirection.push
                           ? '发送'
                           : p.direction == SyncDirection.pull
