@@ -4,6 +4,8 @@ $reportDir = Join-Path $PWD 'startup-smoke'
 New-Item -ItemType Directory -Force $reportDir | Out-Null
 $reportPath = Join-Path $reportDir 'startup.json'
 $binary = (Resolve-Path $Executable).Path
+$native = Join-Path (Split-Path $binary) 'mysend_transport.dll'
+if (!(Test-Path $native)) { throw 'Native TLS DLL is missing from the Windows application bundle' }
 $app = Start-Process $binary -WorkingDirectory (Split-Path $binary) -ArgumentList @("--startup-report=$reportPath") -PassThru
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds(45)

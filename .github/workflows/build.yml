@@ -10,6 +10,10 @@ on:
     # 路径过滤不作用于 tag push，打标签发版不受影响。
     paths:
       - 'lib/**'
+      - 'native/**'
+      - 'tool/**'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/build.yml'
       - 'android/**'
       - 'windows/**'
       - 'test/**'
@@ -29,12 +33,21 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
 
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install --profile minimal
+
       - name: 安装依赖
         run: flutter pub get
 
-      - name: 运行单元测试（仅提示，不阻断构建）
-        continue-on-error: true
-        run: flutter test
+      - name: 验证原生 TLS 和单元测试
+        run: |
+          cargo build --manifest-path native/transport/Cargo.toml --locked --release
+          flutter test --dart-define=MYSEND_NATIVE_LIBRARY=${{ github.workspace }}/native/transport/target/release/libmysend_transport.so
+
+      - name: 安装 Android 原生编译目标
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.1.10909125" >/dev/null
 
       - name: 静态分析（仅提示，不阻断构建）
         continue-on-error: true
@@ -73,6 +86,9 @@ jobs:
         with:
           flutter-version: '3.24.5'
           channel: 'stable'
+
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install --profile minimal
 
       - name: 安装依赖
         run: flutter pub get

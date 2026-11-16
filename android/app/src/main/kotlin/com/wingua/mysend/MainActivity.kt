@@ -23,6 +23,14 @@ class MainActivity : FlutterActivity() {
         if (hasFocus) applyFullscreen()
     }
 
+    override fun onDestroy() {
+        if (isFinishing && !isChangingConfigurations) {
+            NativeTransferLifecycle.stopAll()
+            stopService(android.content.Intent(this, SyncKeepAliveService::class.java))
+        }
+        super.onDestroy()
+    }
+
     private fun applyFullscreen() {
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT

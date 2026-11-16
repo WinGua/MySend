@@ -147,7 +147,8 @@ class DiscoveryService extends ChangeNotifier {
         onPeerSessionChanged?.call(peer.id);
         wasConnected = false;
       }
-      _devices[peer.id] = wasConnected ? peer.copyWith(connected: true) : peer;
+      _devices[peer.id] =
+          wasConnected ? peer.copyWith(connected: true) : peer;
       notifyListeners();
     } catch (_) {
       // 忽略无法解析的报文。
@@ -174,8 +175,7 @@ class DiscoveryService extends ChangeNotifier {
 
     for (final target in _targets) {
       try {
-        socket.send(
-            payload, InternetAddress(target), AppConstants.discoveryPort);
+        socket.send(payload, InternetAddress(target), AppConstants.discoveryPort);
       } catch (_) {}
     }
   }

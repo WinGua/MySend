@@ -54,7 +54,9 @@ class TokenStore {
 
   String newToken() {
     final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
-    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return bytes
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
   }
 }
 

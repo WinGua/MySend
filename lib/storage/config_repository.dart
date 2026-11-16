@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'app_storage.dart';
 
 import '../core/constants.dart';
 import '../core/utils.dart';
@@ -46,17 +46,18 @@ class AppConfig {
             Map<String, String>.from(j['trustedFingerprints'] as Map? ?? {}),
         deviceId: j['deviceId'] as String? ?? newUuid(),
         deviceName: j['deviceName'] as String? ?? '未命名设备',
-        transferPort:
-            (j['transferPort'] as num?)?.toInt() ?? AppConstants.transferPort,
+        transferPort: (j['transferPort'] as num?)?.toInt() ?? AppConstants.transferPort,
         mappings: (j['mappings'] as List<dynamic>? ?? [])
-            .map((e) =>
-                SyncMapping.fromJson(Map<String, dynamic>.from(e as Map)))
+            .map((e) => SyncMapping.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
       );
 }
 
 /// 配置仓库：负责读取 / 写入本地 JSON 配置，并在变更时通知 UI。
 class ConfigRepository extends ChangeNotifier {
+  final AppStorage _storage;
+  ConfigRepository({AppStorage? storage})
+      : _storage = storage ?? AppStorage.current;
   AppConfig _config = AppConfig.defaults();
   bool _loaded = false;
 
@@ -64,7 +65,7 @@ class ConfigRepository extends ChangeNotifier {
   bool get loaded => _loaded;
 
   Future<File> _file() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await _storage.directory;
     return File(p.join(dir.path, AppConstants.configFileName));
   }
 

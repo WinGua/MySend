@@ -7,15 +7,17 @@ class DelayedTransferLink {
   final ServerSocket listener;
   final Set<Socket> _sockets = {};
   final Duration delay;
+  final int? maxChunkBytes;
 
-  DelayedTransferLink._(this.listener, this.delay);
+  DelayedTransferLink._(this.listener, this.delay, this.maxChunkBytes);
 
   int get port => listener.port;
 
-  static Future<DelayedTransferLink> start(int targetPort) async {
+  static Future<DelayedTransferLink> start(int targetPort,
+      {int? maxChunkBytes}) async {
     final listener = await ServerSocket.bind('127.0.0.1', 0);
-    final link =
-        DelayedTransferLink._(listener, const Duration(milliseconds: 10));
+    final link = DelayedTransferLink._(
+        listener, const Duration(milliseconds: 10), maxChunkBytes);
     listener.listen((incoming) async {
       link._sockets.add(incoming);
       try {
@@ -35,9 +37,13 @@ class DelayedTransferLink {
   Future<void> _forward(Socket source, Socket target) async {
     try {
       await for (final bytes in source) {
-        await Future<void>.delayed(delay);
-        target.add(bytes);
-        await target.flush();
+        final step = maxChunkBytes ?? bytes.length;
+        for (var offset = 0; offset < bytes.length; offset += step) {
+          await Future<void>.delayed(delay);
+          target.add(
+              bytes.sublist(offset, (offset + step).clamp(0, bytes.length)));
+          await target.flush();
+        }
       }
     } catch (_) {
       // 测试结束时连接会被显式销毁。

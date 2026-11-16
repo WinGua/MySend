@@ -72,6 +72,12 @@ class SyncKeepAliveService : Service() {
         super.onDestroy()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        NativeTransferLifecycle.stopAll()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

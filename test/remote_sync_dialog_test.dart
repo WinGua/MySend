@@ -49,6 +49,38 @@ void main() {
       await font.load();
     }
   });
+  testWidgets('中断按钮等待连接退出后显示取消，不伪报100%', (tester) async {
+    final result = Completer<SyncResult>();
+    var cancels = 0;
+    await tester.pumpWidget(FluentApp(
+        theme: testTheme(),
+        home: SyncDialog(
+          mappingName: '音乐',
+          failures: const [],
+          cancel: () async {
+            cancels++;
+            result.completeError(
+                const TransferException(499, 'CANCELLED', '同步已取消'));
+          },
+          run: (_, __, onDetails) {
+            onDetails(const SyncByteProgress(
+                .25,
+                1048576,
+                FileEntry(relativePath: 'large.bin', size: 4194304, mtimeMs: 0),
+                SyncDirection.push,
+                done: 0,
+                total: 1));
+            return result.future;
+          },
+        )));
+    await tester.pump();
+    await tester.tap(find.text('中断同步'));
+    await tester.pumpAndSettle();
+    expect(cancels, 1);
+    expect(find.text('同步已取消'), findsOneWidget);
+    expect(find.textContaining('25%'), findsOneWidget);
+    expect(find.text('关闭'), findsOneWidget);
+  });
   testWidgets('本机发起的大文件也在完成前显示25%', (tester) async {
     final result = Completer<SyncResult>();
     await tester.pumpWidget(FluentApp(

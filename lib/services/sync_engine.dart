@@ -258,6 +258,7 @@ class SyncEngine {
           done++;
           onProgress(done, total, e, SyncDirection.push);
         } catch (err) {
+          if (client.cancelled) rethrow;
           pushFailed++;
           onFailure?.call(e, SyncDirection.push, err);
         }
@@ -279,6 +280,7 @@ class SyncEngine {
         done++;
         onProgress(done, total, e, SyncDirection.pull);
       } catch (err) {
+        if (client.cancelled) rethrow;
         pullFailed++;
         onFailure?.call(e, SyncDirection.pull, err);
       }

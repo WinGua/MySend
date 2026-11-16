@@ -113,8 +113,7 @@ class _HomePageState extends State<HomePage> {
     setState(() => _connecting[d.id] = false);
     if (ok) {
       final linked = (scope.discovery?.devices ?? const <PeerDevice>[])
-          .firstWhere((e) => e.id == d.id,
-              orElse: () => d.copyWith(connected: true));
+          .firstWhere((e) => e.id == d.id, orElse: () => d.copyWith(connected: true));
       setState(() => _peer = linked);
       await _showConnectResult(linked, ok: true);
     } else {
@@ -155,7 +154,8 @@ class _HomePageState extends State<HomePage> {
     final ok = await ensureFileAccess();
     if (!mounted) return ok;
     if (!ok) {
-      _toast('未获得「所有文件访问」权限，无法读写目录', severity: InfoBarSeverity.error);
+      _toast('未获得「所有文件访问」权限，无法读写目录',
+          severity: InfoBarSeverity.error);
       await openManageStorageSettings();
     }
     return ok;
@@ -377,6 +377,7 @@ class _HomePageState extends State<HomePage> {
       barrierDismissible: false,
       builder: (_) => SyncDialog(
         incoming: scope.remoteSync,
+        cancel: scope.cancelCurrentSync,
         mappingName: m.name,
         failures: failures,
         run: runIt,
@@ -474,7 +475,8 @@ class _HomePageState extends State<HomePage> {
           children: [
             AppPageHeader(
               title: '状态',
-              subtitle: 'MySend · ${isSender ? '电脑端' : '安卓端'} · 局域网双向同步',
+              subtitle:
+                  'MySend · ${isSender ? '电脑端' : '安卓端'} · 局域网双向同步',
             ),
             const SizedBox(height: 18),
             _localCard(
@@ -507,8 +509,8 @@ class _HomePageState extends State<HomePage> {
                     SizedBox(height: 6),
                     Text(
                       '请先在「映射」页添加目录，并在另一端的同名映射中配置对应目录。',
-                      style:
-                          TextStyle(fontSize: 12, height: 1.5, color: _muted2),
+                      style: TextStyle(
+                          fontSize: 12, height: 1.5, color: _muted2),
                     ),
                   ],
                 ),
@@ -532,8 +534,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _localCard(
-      String deviceName, int port, int mappingCount, bool running) {
+  Widget _localCard(String deviceName, int port, int mappingCount, bool running) {
     return GlassCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -879,7 +880,8 @@ class _SearchingIndicatorState extends State<_SearchingIndicator>
                 SizedBox(height: 3),
                 Text(
                   '请确保电脑与手机连接同一 Wi-Fi，或让电脑连接手机热点。',
-                  style: TextStyle(fontSize: 11, height: 1.4, color: _muted),
+                  style:
+                      TextStyle(fontSize: 11, height: 1.4, color: _muted),
                 ),
               ],
             ),

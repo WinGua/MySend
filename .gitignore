@@ -20,3 +20,7 @@ Thumbs.db
 *.jks
 *.keystore
 key.properties
+
+# Generated native transport libraries
+/native/transport/target/
+/android/app/src/main/jniLibs/

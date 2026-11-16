@@ -93,6 +93,68 @@ void main() {
     await root.delete(recursive: true);
   });
 
+  test('取消控制验证任务所有者，活动文件退出前不开放新任务', () async {
+    const task = 'cancel-task';
+    expect(server.sessions.acquire('client', task), isTrue);
+    expect(server.sessions.enter('client', task), isTrue);
+    final stranger = PeerClient(
+        identity: localIdentity,
+        peer: client.peer,
+        token: server.issueTokenFor('stranger'),
+        session: 'stranger',
+        deviceId: 'stranger',
+        deviceName: 'stranger',
+        role: 'pc',
+        form: 'desktop',
+        localPort: 0);
+    try {
+      await expectLater(stranger.requestCancellation(task),
+          throwsA(isA<TransferException>()));
+      expect(server.sessions.matches('client', task), isTrue);
+      await client.requestCancellation(task);
+      expect(server.sessions.matches('client', task), isFalse);
+      expect(server.sessions.acquire('stranger', 'new-task'), isFalse);
+      server.sessions.leave();
+      expect(server.sessions.acquire('stranger', 'new-task'), isTrue);
+    } finally {
+      stranger.close();
+    }
+  });
+
+  test('接收端取消会关闭正在等待上传数据的文件连接', () async {
+    const task = 'slow-upload';
+    expect(server.sessions.acquire('client', task), isTrue);
+    final http = HttpClient(context: SecurityContext(withTrustedRoots: false))
+      ..badCertificateCallback = (cert, _, __) =>
+          sha256.convert(cert.der).toString() == identity.fingerprint;
+    final req = await http.postUrl(Uri.parse(
+        'https://127.0.0.1:${server.port}/v2/upload?name=test&path=partial.bin&size=1048576&mtime=1'));
+    req.headers.set('X-MySend-Token', client.token);
+    req.headers.set('X-MySend-Sync', task);
+    req.contentLength = 1048576;
+    req.bufferOutput = false;
+    req.add(Uint8List(768 * 1024));
+    await req.flush();
+    final part = PartStore.partFile(mapping.destPath, 'partial.bin');
+    try {
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while ((!await part.exists() || await part.length() == 0) &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(await part.length(), greaterThan(0));
+      await client
+          .requestCancellation(task)
+          .timeout(const Duration(seconds: 1));
+      expect(server.sessions.busy, isFalse);
+      expect(await File('${mapping.destPath}/partial.bin').exists(), isFalse);
+      expect(await part.length(), lessThan(1048576));
+    } finally {
+      req.abort();
+      http.close(force: true);
+    }
+  });
+
   test('传输端口拒绝明文 HTTP', () async {
     final http = HttpClient()..connectionTimeout = const Duration(seconds: 2);
     addTearDown(() => http.close(force: true));

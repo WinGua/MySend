@@ -13,6 +13,7 @@ import 'buffered_stream.dart';
 import 'protocol.dart';
 import 'sync_session.dart';
 import 'transfer_identity.dart';
+import 'native_transport.dart';
 
 /// 两端统一的 HTTP 服务（协议 v2）。
 ///
@@ -46,6 +47,7 @@ class LocalTransferServer implements TransferServer {
 
   /// 对端主动断开。
   final void Function(String deviceId) onDisconnect;
+  final Future<bool> Function(String peerId, String task)? onCancelOutbound;
 
   /// 当前是否有同步任务占用（同一设备同一时刻只允许一个任务）。
   @override
@@ -55,7 +57,9 @@ class LocalTransferServer implements TransferServer {
   final Set<String> _uploads = {};
 
   HttpServer? _server;
+  NativeTlsProxy? _nativeServer;
   final Set<Future<void>> _requests = {};
+  final Map<HttpRequest, Future<void>> _dataRequests = {};
   final TokenStore _tokens = TokenStore();
 
   LocalTransferServer({
@@ -68,12 +72,13 @@ class LocalTransferServer implements TransferServer {
     required this.onPeerPaired,
     required this.onSyncLog,
     required this.onDisconnect,
+    this.onCancelOutbound,
   }) : remoteSync = remoteSync ?? RemoteSyncTracker() {
     sessions = SyncSession(onEnded: this.remoteSync.interrupted);
   }
 
   @override
-  int get port => _server?.port ?? preferredPort;
+  int get port => _nativeServer?.port ?? _server?.port ?? preferredPort;
 
   @override
   bool get running => _server != null;
@@ -88,13 +93,26 @@ class LocalTransferServer implements TransferServer {
 
   Future<void> start() async {
     if (_server != null) return;
-    try {
-      _server = await HttpServer.bindSecure(
-          InternetAddress.anyIPv4, preferredPort, identity.context);
-    } on SocketException {
-      // 端口被占用时退回系统分配端口，对端通过 hello 获取实际端口。
-      _server = await HttpServer.bindSecure(
-          InternetAddress.anyIPv4, 0, identity.context);
+    final native = NativeTransport.instance;
+    if (native != null) {
+      // Plain HTTP is private to loopback. Only the native TLS listener is advertised.
+      _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      try {
+        _nativeServer = native.server(identity.certificate, identity.privateKey,
+            _server!.port, preferredPort);
+      } catch (_) {
+        await _server!.close(force: true);
+        _server = null;
+        rethrow;
+      }
+    } else {
+      try {
+        _server = await HttpServer.bindSecure(
+            InternetAddress.anyIPv4, preferredPort, identity.context);
+      } on SocketException {
+        _server = await HttpServer.bindSecure(
+            InternetAddress.anyIPv4, 0, identity.context);
+      }
     }
     _leaseSweep = Timer.periodic(const Duration(seconds: 5), (_) {
       sessions.busy;
@@ -102,13 +120,21 @@ class LocalTransferServer implements TransferServer {
     _server!.listen((req) {
       final handling = _handle(req);
       _requests.add(handling);
-      handling.whenComplete(() => _requests.remove(handling));
+      if (req.uri.path == '/v2/file' || req.uri.path == '/v2/upload') {
+        _dataRequests[req] = handling;
+      }
+      handling.whenComplete(() {
+        _requests.remove(handling);
+        _dataRequests.remove(req);
+      });
     });
   }
 
   Future<void> stop() async {
     _leaseSweep?.cancel();
     _leaseSweep = null;
+    _nativeServer?.close();
+    _nativeServer = null;
     try {
       await _server?.close(force: true);
     } catch (_) {}
@@ -117,6 +143,21 @@ class LocalTransferServer implements TransferServer {
     _server = null;
     _tokens.clear();
     sessions.clear();
+  }
+
+  Future<void> cancelTask(String task) async {
+    final owner = sessions.owner;
+    if (owner == null || !sessions.cancel(owner, task)) return;
+    final targets = _dataRequests.entries
+        .where((e) => e.key.headers.value('X-MySend-Sync') == task)
+        .toList();
+    for (final entry in targets) {
+      final port = entry.key.connectionInfo?.remotePort;
+      if (port != null) _nativeServer?.cancelConnection(port);
+      entry.key.response.deadline = Duration.zero;
+    }
+    await Future.wait(targets.map((e) => e.value));
+    remoteSync.interrupted(task, '同步已取消');
   }
 
   Future<void> _handle(HttpRequest req) async {
@@ -160,6 +201,15 @@ class LocalTransferServer implements TransferServer {
         }
         final task = req.uri.queryParameters['task'] ?? '';
         switch (path) {
+          case '/v2/sync/cancel':
+            if (sessions.matches(owner, task)) {
+              await cancelTask(task);
+            } else if (!(await onCancelOutbound?.call(owner, task) ?? false)) {
+              writeError(req, 409, 'BUSY', '同步任务不存在');
+              return;
+            }
+            writeJson(req, {'ok': true});
+            return;
           case '/v2/sync/acquire':
             if (!sessions.acquire(owner, task)) {
               writeError(req, 409, 'BUSY', '已有同步任务正在进行');
@@ -348,7 +398,11 @@ class LocalTransferServer implements TransferServer {
       return;
     }
 
-    final remote = req.connectionInfo?.remoteAddress.address ?? '';
+    final info = req.connectionInfo;
+    final original =
+        info == null ? '' : _nativeServer?.origin(info.remotePort) ?? '';
+    final remote =
+        original.isNotEmpty ? original : info?.remoteAddress.address ?? '';
     final requester = PeerDevice.fromHello(body, remote);
     if (requester.id.isEmpty || requester.id == config.config.deviceId) {
       writeError(req, 400, 'BAD_REQUEST', '设备 id 缺失或与本机相同');

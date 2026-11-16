@@ -1,7 +1,8 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+import 'storage/app_storage.dart';
 
 import 'core/utils.dart';
 import 'models/device_info.dart';
@@ -18,8 +19,9 @@ import 'storage/sync_log_repository.dart';
 /// 全局服务容器：封装配置、会话、发现、收发服务与同步日志。
 class AppScope extends ChangeNotifier {
   final RemoteSyncTracker remoteSync = RemoteSyncTracker();
-  final ConfigRepository config = ConfigRepository();
-  final SyncLogRepository syncLog = SyncLogRepository();
+  final AppStorage storage;
+  final ConfigRepository config;
+  final SyncLogRepository syncLog;
 
   /// 本端会话标识，服务启动时生成；对端据此判断是否需要重新配对。
   String _session = newSessionId();
@@ -28,6 +30,7 @@ class AppScope extends ChangeNotifier {
 
   /// 对端签发给我们、用于调用对端的 token：deviceId -> token。
   final Map<String, String> _peerTokens = {};
+  final Set<PeerClient> _clients = {};
 
   DiscoveryService? discovery;
 
@@ -36,7 +39,10 @@ class AppScope extends ChangeNotifier {
   TransferIdentity? _identity;
   String? connectionError;
 
-  AppScope() {
+  AppScope({AppStorage? storage})
+      : storage = storage ?? AppStorage.current,
+        config = ConfigRepository(storage: storage ?? AppStorage.current),
+        syncLog = SyncLogRepository(storage: storage ?? AppStorage.current) {
     syncLog.load();
   }
 
@@ -49,19 +55,25 @@ class AppScope extends ChangeNotifier {
   int get localPort => server?.port ?? config.config.transferPort;
 
   /// 为该对端创建协议客户端，自动携带会话 token。
-  PeerClient clientFor(PeerDevice d) => PeerClient(
-        identity: _identity!,
-        peer: d.copyWith(
-            fingerprint:
-                config.config.trustedFingerprints[d.id] ?? d.fingerprint),
-        token: _peerTokens[d.id] ?? '',
-        session: session,
-        deviceId: config.config.deviceId,
-        deviceName: config.config.deviceName,
-        role: role,
-        form: deviceForm,
-        localPort: localPort,
-      );
+  PeerClient clientFor(PeerDevice d) {
+    late final PeerClient client;
+    client = PeerClient(
+      identity: _identity!,
+      peer: d.copyWith(
+          fingerprint:
+              config.config.trustedFingerprints[d.id] ?? d.fingerprint),
+      token: _peerTokens[d.id] ?? '',
+      session: session,
+      deviceId: config.config.deviceId,
+      deviceName: config.config.deviceName,
+      role: role,
+      form: deviceForm,
+      localPort: localPort,
+      onClose: () => _clients.remove(client),
+    );
+    _clients.add(client);
+    return client;
+  }
 
   /// 主动连接：配对并交换会话 token。
   Future<bool> connect(PeerDevice d) async {
@@ -126,7 +138,7 @@ class AppScope extends ChangeNotifier {
     _session = newSessionId();
     final cfg = config.config;
     onStage?.call('正在启动 · 读取加密身份');
-    final support = await getApplicationSupportDirectory();
+    final support = await storage.directory;
     _identity ??= await TransferIdentity.loadOrCreate(
       File('${support.path}/mysend_identity.json'),
     );
@@ -142,6 +154,7 @@ class AppScope extends ChangeNotifier {
       onPeerPaired: _onPeerPaired,
       onSyncLog: _onSyncLog,
       onDisconnect: _onDisconnect,
+      onCancelOutbound: _cancelFromPeer,
     );
     server = local;
     onStage?.call('正在启动 · 启动加密传输服务');
@@ -222,7 +235,40 @@ class AppScope extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> _cancelFromPeer(String peerId, String task) async {
+    final targets = _clients
+        .where((c) => c.peer.id == peerId && c.activeTask == task)
+        .toList();
+    if (targets.isEmpty) return false;
+    await Future.wait(targets.map((c) => c.cancel(notifyPeer: false)));
+    return true;
+  }
+
+  Future<void> cancelCurrentSync() async {
+    final targets = _clients.where((c) => c.activeTask != null).toList();
+    final stops = targets.map((c) => c.cancel()).toList();
+    final local = server;
+    final task = local?.sessions.task;
+    final owner = local?.sessions.owner;
+    if (local != null && task != null && owner != config.config.deviceId) {
+      final peers = discovery?.devices.where((p) => p.id == owner).toList() ??
+          <PeerDevice>[];
+      final peer = peers.isEmpty ? null : peers.first;
+      if (peer != null) {
+        final notify = clientFor(peer);
+        unawaited(notify
+            .requestCancellation(task)
+            .catchError((Object _) {})
+            .whenComplete(notify.close));
+      }
+      await local.cancelTask(task);
+    }
+    await Future.wait(stops);
+  }
+
   Future<void> stopServices() async {
+    await cancelCurrentSync();
+    await Future.wait(_clients.toList().map((client) => client.cancel()));
     discovery?.removeListener(notifyListeners);
     await discovery?.stop();
     await server?.stop();

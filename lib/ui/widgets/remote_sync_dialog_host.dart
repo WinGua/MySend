@@ -9,9 +9,10 @@ import 'sync_dialog.dart';
 class RemoteSyncDialogHost extends StatefulWidget {
   final ValueListenable<RemoteSyncState?> progress;
   final Widget child;
+  final Future<void> Function()? cancel;
 
   const RemoteSyncDialogHost(
-      {super.key, required this.progress, required this.child});
+      {super.key, required this.progress, required this.child, this.cancel});
 
   @override
   State<RemoteSyncDialogHost> createState() => _RemoteSyncDialogHostState();
@@ -65,7 +66,8 @@ class _RemoteSyncDialogHostState extends State<RemoteSyncDialogHost> {
       final dismissed = await showGlassDialog<Object>(
           context: context,
           barrierDismissible: false,
-          builder: (_) => SyncDialog.remote(remote: widget.progress));
+          builder: (_) => SyncDialog.remote(
+              remote: widget.progress, cancel: widget.cancel));
       _showing = false;
       if (!mounted) return;
       if (dismissed is String) _dismissedTask = dismissed;

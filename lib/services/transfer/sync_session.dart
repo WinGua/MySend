@@ -9,6 +9,16 @@ class SyncSession {
   DateTime? _deadline;
   int _active = 0;
   bool _releasing = false;
+  String? _endingReason;
+  String? get task {
+    _expire();
+    return _task;
+  }
+
+  String? get owner {
+    _expire();
+    return _owner;
+  }
 
   SyncSession(
       {this.lease = const Duration(seconds: 45),
@@ -20,7 +30,7 @@ class SyncSession {
     if (_active == 0 &&
         _deadline != null &&
         (_releasing || !now().isBefore(_deadline!))) {
-      clear(reason: _releasing ? '同步未正常结束' : '连接超时，同步已中断');
+      clear(reason: _endingReason ?? (_releasing ? '同步未正常结束' : '连接超时，同步已中断'));
     }
   }
 
@@ -59,6 +69,7 @@ class SyncSession {
   }
 
   void leave() {
+    if (_active <= 0) throw StateError('同步活动请求计数不匹配');
     _active--;
     if (!_releasing) _deadline = now().add(lease);
     _expire();
@@ -70,12 +81,26 @@ class SyncSession {
     _expire();
   }
 
+  bool cancel(String owner, String task) {
+    if (!matches(owner, task)) return false;
+    _releasing = true;
+    _endingReason = '同步已取消';
+    _expire();
+    return true;
+  }
+
   void clear({String reason = '同步连接已断开'}) {
+    if (_active > 0) {
+      _releasing = true;
+      _endingReason = reason;
+      return;
+    }
     final task = _task;
     _owner = null;
     _task = null;
     _deadline = null;
     _releasing = false;
+    _endingReason = null;
     if (task != null) onEnded?.call(task, reason);
   }
 }

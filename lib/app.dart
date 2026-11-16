@@ -11,7 +11,8 @@ final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 class MySendApp extends StatelessWidget {
   final Future<void> Function(ValueChanged<String>)? initialize;
-  const MySendApp({super.key, this.initialize});
+  final Future<bool> Function()? restartAsAdministrator;
+  const MySendApp({super.key, this.initialize, this.restartAsAdministrator});
 
   @override
   Widget build(BuildContext context) {
@@ -22,8 +23,11 @@ class MySendApp extends StatelessWidget {
       navigatorKey: appNavigatorKey,
       home: StartupGate(
           initialize: initialize,
+          restartAsAdministrator: restartAsAdministrator,
           child: RemoteSyncDialogHost(
-              progress: scope.remoteSync, child: const Shell())),
+              progress: scope.remoteSync,
+              cancel: scope.cancelCurrentSync,
+              child: const Shell())),
     );
   }
 }

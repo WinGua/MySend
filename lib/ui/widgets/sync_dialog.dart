@@ -59,6 +59,7 @@ class _SyncProgress {
 /// 同步进度弹窗：总进度 + 发送/接收分项 + 当前文件 + 速度，完成后需手动关闭。
 class SyncDialog extends StatefulWidget {
   final String mappingName;
+  final Future<void> Function()? cancel;
 
   /// 同步过程中收集到的失败原因（最多 20 条），由调用方持有。
   final List<String> failures;
@@ -77,9 +78,10 @@ class SyncDialog extends StatefulWidget {
     required this.failures,
     required this.run,
     this.incoming,
+    this.cancel,
   }) : remote = null;
 
-  const SyncDialog.remote({super.key, required this.remote})
+  const SyncDialog.remote({super.key, required this.remote, this.cancel})
       : mappingName = '',
         failures = const [],
         incoming = null,
@@ -93,6 +95,8 @@ class _SyncDialogState extends State<SyncDialog> {
   final ValueNotifier<_SyncProgress> _progress =
       ValueNotifier(const _SyncProgress());
   bool _running = true;
+  bool _cancelling = false;
+  bool _cancelled = false;
   String? _error;
   SyncResult? _result;
   final Stopwatch _watch = Stopwatch();
@@ -166,7 +170,8 @@ class _SyncDialogState extends State<SyncDialog> {
                 : SyncDirection.pull);
     setState(() {
       _running = !state.finished;
-      _error = state.error;
+      _cancelled = state.error?.contains('已取消') == true;
+      _error = _cancelled ? null : state.error;
       _result = state.finished
           ? SyncResult(
               pushed: state.sentCount,
@@ -232,9 +237,30 @@ class _SyncDialogState extends State<SyncDialog> {
       if (mounted) {
         setState(() {
           _running = false;
-          _error = '$e';
+          _cancelled =
+              _cancelling || (e is TransferException && e.code == 'CANCELLED');
+          _error = _cancelled ? null : '$e';
         });
       }
+    }
+  }
+
+  Future<void> _cancel() async {
+    if (_cancelling || widget.cancel == null) return;
+    setState(() => _cancelling = true);
+    try {
+      await widget.cancel!();
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _cancelled = true;
+          _error = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = '取消失败：$error');
+    } finally {
+      if (mounted) setState(() => _cancelling = false);
     }
   }
 
@@ -244,15 +270,20 @@ class _SyncDialogState extends State<SyncDialog> {
     final err = _error;
     final failed = _result?.failed ?? 0;
     final title = finished
-        ? (err != null
-            ? '同步失败'
-            : failed > 0
-                ? '同步完成（部分失败）'
-                : '同步完成')
+        ? (_cancelled
+            ? '同步已取消'
+            : err != null
+                ? '同步失败'
+                : failed > 0
+                    ? '同步完成（部分失败）'
+                    : '同步完成')
         : '${widget.remote?.value?.preparing == true ? '准备同步' : '同步中'} · ${widget.remote?.value?.mappingName ?? widget.mappingName}';
 
     return PopScope(
         canPop: finished,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop && _running) _cancel();
+        },
         child: GlassDialog(
           title: title,
           maxWidth: 400,
@@ -293,7 +324,9 @@ class _SyncDialogState extends State<SyncDialog> {
                             const SizedBox(height: 10),
                           ],
                           GlassProgressBar(
-                            value: finished && err == null ? 1.0 : fraction,
+                            value: finished && err == null && !_cancelled
+                                ? 1.0
+                                : fraction,
                             height: 16,
                           ),
                           const SizedBox(height: 12),
@@ -367,13 +400,17 @@ class _SyncDialogState extends State<SyncDialog> {
                   ),
           ),
           actions: [
+            if (!finished && widget.cancel != null)
+              Button(
+                  onPressed: _cancelling ? null : _cancel,
+                  child: Text(_cancelling ? '正在取消…' : '中断同步')),
             if (finished)
               FilledButton(
                 child: const Text('关闭'),
                 onPressed: () => Navigator.pop(
                     context,
                     widget.remote?.value?.task ??
-                        (err == null ? _result : null)),
+                        (err == null && !_cancelled ? _result : null)),
               ),
           ],
         ));
