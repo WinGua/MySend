@@ -1,6 +1,6 @@
 # Native TLS transport
 
-The existing MySend HTTP protocol runs through bounded native TLS tunnels. LAN listeners use rustls TLS 1.2/1.3; unencrypted HTTP listeners bind only to loopback. A peer's SHA-256 certificate fingerprint, validity and handshake signatures are checked before its HTTP bytes are forwarded. Tokens and dual-device sync leases remain enforced by the existing protocol server.
+The existing MySend HTTP protocol runs through bounded native TLS tunnels. LAN listeners use rustls TLS 1.2/1.3; unencrypted HTTP listeners bind only to loopback. A peer's SHA-256 certificate fingerprint, validity and handshake signatures are checked before its HTTP bytes are forwarded. Tokens, private-key pairing challenges and dual-device sync leases are enforced by the protocol server. Mapping file access uses no-follow directory handles; publication atomically refuses an existing destination.
 
 The TLS adapter uses certificate pinning and bounded streaming. Design reference: [LocalSend (fixed revision)](https://github.com/localsend/localsend/tree/2e7ef1972b0b4e210608ec77ef5fad334f798f7e) (Apache-2.0, Copyright 2022–2026 Tien Do Nam). This adapter is independently implemented; no LocalSend source files are bundled.
 

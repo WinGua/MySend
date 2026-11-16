@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -49,6 +50,7 @@ void main() {
         config: config,
         isSender: false,
         session: 'server',
+        onPairRequest: (_) async => true,
         onPeerPaired: (_, __) {},
         onSyncLog: (_) async {},
         onDisconnect: (_) {});
@@ -62,6 +64,7 @@ void main() {
         config: localConfig,
         isSender: true,
         session: 'client',
+        onPairRequest: (_) async => true,
         onPeerPaired: (_, __) {},
         onSyncLog: (_) async {},
         onDisconnect: (_) {});
@@ -91,6 +94,83 @@ void main() {
     await server.stop();
     await localServer.stop();
     await root.delete(recursive: true);
+  });
+
+  test('首次配对必须确认，停止服务会结束等待且不信任该身份', () async {
+    var paired = false;
+    final requested = Completer<void>();
+    final decision = Completer<bool>();
+    final promptServer = LocalTransferServer(
+      identity: identity,
+      preferredPort: 0,
+      config: ConfigRepository(),
+      isSender: false,
+      session: 'prompt-server',
+      onPairRequest: (_) {
+        requested.complete();
+        return decision.future;
+      },
+      onPeerPaired: (_, __) {
+        paired = true;
+      },
+      onSyncLog: (_) async {},
+      onDisconnect: (_) {},
+    );
+    await promptServer.start();
+    final requester = PeerClient(
+        identity: localIdentity,
+        peer: client.peer.copyWith(port: promptServer.port),
+        token: '',
+        session: 'client',
+        deviceId: 'client',
+        deviceName: 'client',
+        role: 'pc',
+        form: 'desktop',
+        localPort: 0);
+    try {
+      final pending = requester
+          .pair()
+          .then<Object>((value) => value, onError: (Object error) => error);
+      await requested.future.timeout(const Duration(seconds: 2));
+      expect(paired, isFalse);
+      await promptServer.stop().timeout(const Duration(seconds: 2));
+      await pending.timeout(const Duration(seconds: 2));
+      expect(paired, isFalse);
+    } finally {
+      if (!decision.isCompleted) decision.complete(false);
+      requester.close();
+      await promptServer.stop();
+    }
+  });
+
+  test('公开设备 ID 和指纹不能伪造已配对身份或替换有效 token', () async {
+    server.config.config.trustedFingerprints['client'] =
+        localIdentity.fingerprint;
+    final http = HttpClient(context: SecurityContext(withTrustedRoots: false))
+      ..badCertificateCallback = (cert, _, __) =>
+          sha256.convert(cert.der).toString() == identity.fingerprint;
+    try {
+      final request = await http
+          .postUrl(Uri.parse('https://127.0.0.1:${server.port}/v2/pair'));
+      final bytes = utf8.encode(jsonEncode({
+        ...PeerDevice.describe(
+            id: 'client',
+            name: 'forged',
+            role: 'pc',
+            form: 'desktop',
+            port: 0,
+            session: 'forged',
+            fingerprint: localIdentity.fingerprint),
+      }));
+      request.contentLength = bytes.length;
+      request.add(bytes);
+      final response = await request.close();
+      await response.drain<void>();
+      expect(response.statusCode, 401, reason: '公开指纹不是持有私钥的证明');
+      await client.fetchIndex(mapping.name);
+    } finally {
+      http.close(force: true);
+    }
   });
 
   test('取消控制验证任务所有者，活动文件退出前不开放新任务', () async {
@@ -471,6 +551,7 @@ void main() {
         config: config,
         isSender: false,
         session: 'stop-test',
+        onPairRequest: (_) async => true,
         onPeerPaired: (_, __) {},
         onSyncLog: (_) async {
           entered.complete();

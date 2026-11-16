@@ -20,7 +20,7 @@ void main() {
     const channel = MethodChannel('plugins.flutter.io/path_provider');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (_) async => root.path);
-    final app = AppScope();
+    final app = AppScope()..onPairRequest = (_) async => true;
     final source = Directory('${root.path}/remote');
     await source.create();
     final file = File('${source.path}/large.bin');
@@ -39,7 +39,7 @@ void main() {
         config: config,
         isSender: !isSender,
         session: 'remote',
-        onPeerPaired: (_, __) {},
+        onPairRequest: (_) async => true, onPeerPaired: (_, __) {},
         onSyncLog: (_) async {},
         onDisconnect: (_) {});
     await server.start();

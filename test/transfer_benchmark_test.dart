@@ -40,7 +40,7 @@ void main() {
           config: config,
           isSender: false,
           session: 's',
-          onPeerPaired: (_, __) {},
+          onPairRequest: (_) async => true, onPeerPaired: (_, __) {},
           onSyncLog: (_) async {},
           onDisconnect: (_) {});
       final localConfig = ConfigRepository();
@@ -51,7 +51,7 @@ void main() {
           config: localConfig,
           isSender: true,
           session: 'c',
-          onPeerPaired: (_, __) {},
+          onPairRequest: (_) async => true, onPeerPaired: (_, __) {},
           onSyncLog: (_) async {},
           onDisconnect: (_) {});
       await server.start();

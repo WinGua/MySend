@@ -10,6 +10,7 @@ import '../../models/device_info.dart';
 import '../../models/file_entry.dart';
 import '../../models/sync_mapping.dart';
 import 'protocol.dart';
+import 'pairing_proof.dart';
 import 'buffered_stream.dart';
 import 'local_transfer_server.dart';
 import 'transfer_identity.dart';
@@ -247,8 +248,7 @@ class PeerClient {
   // ---- 配对 ----
 
   Future<PairOutcome> pair({String tokenToOffer = ''}) async {
-    final req = await _open('POST', '/v2/pair');
-    final body = jsonEncode({
+    final body = <String, dynamic>{
       ...PeerDevice.describe(
         fingerprint: identity.fingerprint,
         id: deviceId,
@@ -261,13 +261,29 @@ class PeerClient {
       'app': AppConstants.appTag,
       'appVersion': AppConstants.currentVersion,
       'token': tokenToOffer,
-    });
-    final bytes = utf8.encode(body);
-    req.headers.contentType = ContentType('application', 'json', charset: 'utf-8');
+    };
+    final challengeRequest =
+        await _open('POST', '/v2/pair/challenge', control: true);
+    final challengeBytes = utf8.encode(jsonEncode(
+        {'id': deviceId, 'fingerprint': identity.fingerprint, 'role': role}));
+    challengeRequest.contentLength = challengeBytes.length;
+    challengeRequest.add(challengeBytes);
+    final challengeResponse = await _nativeAwait(
+        challengeRequest.close().timeout(AppConstants.controlTimeout));
+    final challenge = await _readJson(challengeResponse);
+    if (challengeResponse.statusCode == 404) {
+      throw const TransferException(426, 'UPGRADE_REQUIRED', '对端需要支持私钥配对证明');
+    }
+    _ensureOk(challengeResponse.statusCode, challenge);
+    PairingProof.sign(body, challenge, identity, peer.fingerprint);
+    final req = await _open('POST', '/v2/pair', control: true);
+    final bytes = utf8.encode(jsonEncode(body));
+    req.headers.contentType =
+        ContentType('application', 'json', charset: 'utf-8');
     req.contentLength = bytes.length;
     req.add(bytes);
     final res =
-        await _nativeAwait(req.close().timeout(AppConstants.controlTimeout));
+        await _nativeAwait(req.close().timeout(const Duration(minutes: 2)));
     final map = await _readJson(res);
     if (res.statusCode == 200 && map['ok'] == true) {
       final issued = map['token'] as String? ?? '';

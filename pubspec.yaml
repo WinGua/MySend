@@ -45,8 +45,15 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  path_provider_platform_interface: ^2.1.2
 
 flutter:
   uses-material-design: true
   assets:
     - assets/native-third-party-notices.txt
+    - assets/security/symbols.tsv
+    - assets/security/NOTICE.txt
+  fonts:
+    - family: MySendPairingSymbols
+      fonts:
+        - asset: assets/security/pairing-symbols.otf

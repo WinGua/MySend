@@ -1,7 +1,3 @@
-import 'dart:io';
-
-import 'package:path/path.dart' as p;
-
 import '../core/constants.dart';
 import '../core/utils.dart';
 import '../models/file_entry.dart';
@@ -318,10 +314,10 @@ class SyncEngine {
     void Function(int bytes)? onBytes,
     void Function(int offset)? onStarted,
   ) async {
-    final srcFile = p.join(
-      localRoot,
-      e.relativePath.replaceAll('/', Platform.pathSeparator),
-    );
+    final srcFile = LocalIndexService.safeFile(localRoot, e.relativePath);
+    if (srcFile == null) {
+      throw const TransferException(400, 'PATH_INVALID', '路径非法');
+    }
     final start = knownOffset ??
         await client
             .resumeOffset(mapping, e.relativePath, e.size, e.mtimeMs)
@@ -331,7 +327,7 @@ class SyncEngine {
       await client.upload(
         mapping,
         e.relativePath,
-        File(srcFile),
+        srcFile,
         mtimeMs: e.mtimeMs,
         start: start,
         onBytes: onBytes,
@@ -350,7 +346,7 @@ class SyncEngine {
       await client.upload(
         mapping,
         e.relativePath,
-        File(srcFile),
+        srcFile,
         mtimeMs: e.mtimeMs,
         start: retryStart,
         onBytes: onBytes,
@@ -404,7 +400,10 @@ class SyncEngine {
 
     await dst.parent.create(recursive: true);
     if (await dst.exists()) return;
-    await part.rename(dst.path);
+    if (!await part.publish(rel)) {
+      await PartStore.discard(root, rel);
+      return;
+    }
     if (e.mtimeMs > 0) {
       try {
         await dst.setLastModified(

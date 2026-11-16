@@ -13,7 +13,9 @@ import '../../platform/permissions.dart';
 import '../../services/local_index_service.dart';
 import '../../services/sync_engine.dart';
 import '../../services/transfer/protocol.dart';
+import '../../services/transfer/pairing_verification.dart';
 import '../widgets/glass.dart';
+import '../widgets/pairing_verification_view.dart';
 import '../widgets/sync_dialog.dart';
 
 const _accent = Color(0xFF4A9EFF);
@@ -127,6 +129,23 @@ class _HomePageState extends State<HomePage> {
       setState(() => _peer = null);
     }
     await scope.disconnect(d);
+  }
+
+  Future<void> _verify(PeerDevice device) async {
+    final local = scope.identityFingerprint;
+    if (local == null || device.fingerprint.isEmpty) return;
+    await showGlassDialog<void>(
+      context: context,
+      builder: (ctx) => SingleChildScrollView(
+          child: GlassDialog(
+        title: '与「${device.name}」核对图标',
+        content: PairingVerificationView(
+            verification: PairingVerification(local, device.fingerprint)),
+        actions: [
+          Button(onPressed: () => Navigator.pop(ctx), child: const Text('关闭'))
+        ],
+      )),
+    );
   }
 
   Future<void> _forget(PeerDevice device) async {
@@ -647,6 +666,12 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             const SizedBox(width: 8),
+            if (RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(d.fingerprint)) ...[
+              Button(
+                  onPressed: () => _verify(d),
+                  child: const Text('核对图标', style: TextStyle(fontSize: 12))),
+              const SizedBox(width: 8),
+            ],
             if (!connected &&
                 !busy &&
                 scope.config.config.trustedFingerprints.containsKey(d.id)) ...[

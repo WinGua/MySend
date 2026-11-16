@@ -3,7 +3,7 @@ name: build
 on:
   push:
     branches:
-      - 'main'
+      - '**'
     tags:
       - 'v*'
     # 仅当影响应用产物的文件变更时才构建；文档、图片说明等不会触发。
@@ -41,6 +41,7 @@ jobs:
 
       - name: 验证原生 TLS 和单元测试
         run: |
+          cargo test --manifest-path native/transport/Cargo.toml --locked
           cargo build --manifest-path native/transport/Cargo.toml --locked --release
           flutter test --dart-define=MYSEND_NATIVE_LIBRARY=${{ github.workspace }}/native/transport/target/release/libmysend_transport.so
 
@@ -90,11 +91,19 @@ jobs:
       - name: 安装 Rust 工具链
         run: rustup toolchain install --profile minimal
 
+      - name: 验证原生文件安全
+        run: cargo test --manifest-path native/transport/Cargo.toml --locked
+
       - name: 安装依赖
         run: flutter pub get
 
       - name: 构建 Windows
         run: flutter build windows --release
+
+      - name: 验证 Windows 文件安全和协议回归
+        shell: pwsh
+        run: |
+          flutter test --dart-define=MYSEND_NATIVE_LIBRARY=${{ github.workspace }}/native/transport/target/release/mysend_transport.dll
 
       - name: 验证 Windows release 首帧和服务启动
         shell: pwsh

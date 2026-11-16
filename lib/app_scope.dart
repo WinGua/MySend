@@ -37,7 +37,10 @@ class AppScope extends ChangeNotifier {
   /// 两端统一的 HTTP 服务：同时具备发送与接收能力。
   LocalTransferServer? server;
   TransferIdentity? _identity;
+  String? get identityFingerprint => _identity?.fingerprint;
   String? connectionError;
+  Future<bool> Function(PeerDevice)? onPairRequest;
+  void Function()? onPairRequestEnded;
 
   AppScope({AppStorage? storage})
       : storage = storage ?? AppStorage.current,
@@ -155,6 +158,8 @@ class AppScope extends ChangeNotifier {
       onSyncLog: _onSyncLog,
       onDisconnect: _onDisconnect,
       onCancelOutbound: _cancelFromPeer,
+      onPairRequest: (peer) async => await onPairRequest?.call(peer) ?? false,
+      onPairRequestEnded: () => onPairRequestEnded?.call(),
     );
     server = local;
     onStage?.call('正在启动 · 启动加密传输服务');

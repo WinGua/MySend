@@ -1,6 +1,7 @@
 //! Native TLS data plane. Only loopback HTTP is exposed to the Dart process;
 //! LAN connections always use TLS 1.2/1.3 with a pinned peer certificate.
 //! Design reference: LocalSend core HTTP certificate verifier and bounded I/O.
+mod safe_fs;
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName, UnixTime},

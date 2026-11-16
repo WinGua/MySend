@@ -57,7 +57,7 @@ class PeerDevice {
       {
         'protocol': 'https',
         'fingerprint': fingerprint,
-        'capabilities': ['sync-session'],
+        'capabilities': ['sync-session', 'pair-proof-v1'],
         'proto': AppConstants.protoVersion,
         'id': id,
         'name': name,

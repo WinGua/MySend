@@ -9,6 +9,7 @@ import '../../models/sync_mapping.dart';
 import '../../storage/config_repository.dart';
 import '../local_index_service.dart';
 import 'part_store.dart';
+import 'pairing_proof.dart';
 import 'buffered_stream.dart';
 import 'protocol.dart';
 import 'sync_session.dart';
@@ -29,6 +30,11 @@ import 'native_transport.dart';
 /// - POST /v2/disconnect
 class LocalTransferServer implements TransferServer {
   final TransferIdentity identity;
+  late final PairingProof _pairing = PairingProof(identity, session);
+  final Future<bool> Function(PeerDevice)? onPairRequest;
+  final void Function()? onPairRequestEnded;
+  Completer<void> _pairStop = Completer<void>();
+  bool _awaitingPairApproval = false;
   late final SyncSession sessions;
   final RemoteSyncTracker remoteSync;
   Timer? _leaseSweep;
@@ -73,6 +79,8 @@ class LocalTransferServer implements TransferServer {
     required this.onSyncLog,
     required this.onDisconnect,
     this.onCancelOutbound,
+    this.onPairRequest,
+    this.onPairRequestEnded,
   }) : remoteSync = remoteSync ?? RemoteSyncTracker() {
     sessions = SyncSession(onEnded: this.remoteSync.interrupted);
   }
@@ -93,6 +101,7 @@ class LocalTransferServer implements TransferServer {
 
   Future<void> start() async {
     if (_server != null) return;
+    _pairStop = Completer<void>();
     final native = NativeTransport.instance;
     if (native != null) {
       // Plain HTTP is private to loopback. Only the native TLS listener is advertised.
@@ -131,6 +140,7 @@ class LocalTransferServer implements TransferServer {
   }
 
   Future<void> stop() async {
+    if (!_pairStop.isCompleted) _pairStop.complete();
     _leaseSweep?.cancel();
     _leaseSweep = null;
     _nativeServer?.close();
@@ -142,6 +152,7 @@ class LocalTransferServer implements TransferServer {
     await Future.wait(_requests.toList());
     _server = null;
     _tokens.clear();
+    _pairing.clear();
     sessions.clear();
   }
 
@@ -166,6 +177,10 @@ class LocalTransferServer implements TransferServer {
       final path = req.uri.path;
       if (path == '/v2/hello') {
         _hello(req);
+        return;
+      }
+      if (path == '/v2/pair/challenge') {
+        await _pairChallenge(req);
         return;
       }
       if (path == '/v2/pair') {
@@ -359,7 +374,7 @@ class LocalTransferServer implements TransferServer {
       'minPeer': AppConstants.minPeer,
       'protocol': 'https',
       'fingerprint': identity.fingerprint,
-      'capabilities': ['sync-session'],
+      'capabilities': ['sync-session', 'pair-proof-v1'],
       'session': session,
       'device': {
         'id': cfg.deviceId,
@@ -369,7 +384,39 @@ class LocalTransferServer implements TransferServer {
     });
   }
 
+  Future<void> _pairChallenge(HttpRequest req) async {
+    if (req.method != 'POST' || busy) {
+      writeError(req, 409, 'BUSY', '无法开始配对');
+      return;
+    }
+    final body = await readJsonObject(req, maxBytes: 16384);
+    final id = body?['id'];
+    final fp = body?['fingerprint'];
+    if (body == null ||
+        id is! String ||
+        id.isEmpty ||
+        id.length > 128 ||
+        id == config.config.deviceId ||
+        fp is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(fp) ||
+        !['pc', 'android'].contains(body['role']) ||
+        body['role'] == _role) {
+      writeError(req, 400, 'BAD_REQUEST', '配对身份无效');
+      return;
+    }
+    final known = config.config.trustedFingerprints[id];
+    if (known != null && known != fp) {
+      writeError(req, 403, 'CERT_CHANGED', '对端证书身份已改变');
+      return;
+    }
+    writeJson(req, _pairing.issue(id, fp));
+  }
+
   Future<void> _pair(HttpRequest req) async {
+    if (req.method != 'POST') {
+      writeError(req, 405, 'BAD_REQUEST', '需要 POST 请求');
+      return;
+    }
     if (busy) {
       writeError(req, 409, 'BUSY', '正在同步中');
       return;
@@ -378,7 +425,7 @@ class LocalTransferServer implements TransferServer {
       writeError(req, 426, 'PROTO_MISMATCH', '协议版本不一致');
       return;
     }
-    final body = await readJsonObject(req);
+    final body = await readJsonObject(req, maxBytes: 32768);
     if (body == null) {
       writeError(req, 400, 'BAD_REQUEST', '请求体非法');
       return;
@@ -419,6 +466,40 @@ class LocalTransferServer implements TransferServer {
       writeError(req, 409, 'BUSY', '正在同步中');
       return;
     }
+    if (!_pairing.verify(body)) {
+      writeError(req, 401, 'PAIR_PROOF_REQUIRED', '配对需要有效的私钥持有证明');
+      return;
+    }
+    if (known == null) {
+      if (_awaitingPairApproval) {
+        writeError(req, 409, 'BUSY', '正在确认另一台设备');
+        return;
+      }
+      _awaitingPairApproval = true;
+      var accepted = false;
+      try {
+        accepted = await Future.any([
+          onPairRequest?.call(requester) ?? Future.value(false),
+          _pairStop.future.then((_) => false),
+        ]).timeout(const Duration(minutes: 2));
+      } on TimeoutException {
+        accepted = false;
+      } finally {
+        _awaitingPairApproval = false;
+        onPairRequestEnded?.call();
+      }
+      if (!accepted) {
+        writeError(req, 403, 'PAIR_REJECTED', '配对未获确认');
+        return;
+      }
+    }
+    final currentTrust = config.config.trustedFingerprints[requester.id];
+    if (_pairStop.isCompleted ||
+        busy ||
+        (currentTrust != null && currentTrust != requester.fingerprint)) {
+      writeError(req, 409, 'BUSY', '配对状态已变化');
+      return;
+    }
     final peerToken = body['token'] as String? ?? '';
     final token = _tokens.issueFor(requester.id);
     onPeerPaired(requester.copyWith(connected: true), peerToken);
@@ -429,7 +510,7 @@ class LocalTransferServer implements TransferServer {
       'token': token,
       'protocol': 'https',
       'fingerprint': identity.fingerprint,
-      'capabilities': ['sync-session'],
+      'capabilities': ['sync-session', 'pair-proof-v1'],
       'session': session,
       'device': {
         'id': cfg.deviceId,
@@ -704,7 +785,11 @@ class LocalTransferServer implements TransferServer {
         writeError(req, 409, 'ALREADY_EXISTS', '目标文件已存在，已跳过');
         return;
       }
-      await part.rename(dst.path);
+      if (!await part.publish(rel)) {
+        await PartStore.discard(root, rel);
+        writeError(req, 409, 'ALREADY_EXISTS', '目标文件已存在，已跳过');
+        return;
+      }
       if (mtime > 0) {
         try {
           await dst.setLastModified(

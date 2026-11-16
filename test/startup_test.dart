@@ -7,13 +7,40 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mysend/main.dart' as app;
 import 'package:mysend/app.dart';
 import 'package:mysend/app_scope.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+
+class _StartupPathProvider extends PathProviderPlatform {
+  final Future<String?> pending;
+  _StartupPathProvider(this.pending);
+  @override
+  Future<String?> getApplicationSupportPath() => pending;
+}
 
 void main() {
   testWidgets('配置或服务初始化未完成时仍显示首帧，失败时显示可重试错误', (tester) async {
-    const channel = MethodChannel('plugins.flutter.io/path_provider');
     final directory = Completer<String?>();
-    tester.binding.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (_) => directory.future);
+    final originalProvider = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _StartupPathProvider(directory.future);
+    // The widget test exercises main's first frame and storage failure. Native
+    // window initialization is covered by the Windows release smoke test.
+    const windowChannels = [
+      MethodChannel('window_manager'),
+      MethodChannel('com.alexmercerind/flutter_acrylic')
+    ];
+    for (final channel in windowChannels) {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          (_) async =>
+              throw MissingPluginException('No native window in widget test'));
+    }
+    addTearDown(() async {
+      await scope.stopServices();
+      PathProviderPlatform.instance = originalProvider;
+      for (final channel in windowChannels) {
+        tester.binding.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      }
+    });
     final launched = app.main();
     try {
       await tester.pump();
@@ -25,11 +52,12 @@ void main() {
       await launched.catchError((_) {});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('重试'), findsOneWidget);
+      expect(find.text('重试'), findsOneWidget,
+          reason: tester
+              .widgetList<Text>(find.byType(Text))
+              .map((text) => text.data)
+              .join('\n'));
       expect(find.textContaining('模拟应用目录不可用'), findsWidgets);
-      await scope.stopServices();
-      tester.binding.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null);
     }
   });
   testWidgets('目录拒绝访问时自动请求一次提权，取消后重试不反复弹窗', (tester) async {

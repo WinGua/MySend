@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../../core/constants.dart';
 import '../../core/utils.dart';
+import 'safe_file.dart';
 
 /// 分片元数据，用于校验续传偏移与文件归属。
 class PartMeta {
@@ -61,7 +62,7 @@ class PartStore {
   }
 
   static Future<void> _removeEmptyDirectory(String root) async {
-    final dir = Directory(p.join(root, AppConstants.partDirName));
+    final dir = SafeDirectory(root, AppConstants.partDirName);
     try {
       if (await FileSystemEntity.type(dir.path, followLinks: false) ==
           FileSystemEntityType.directory) {
@@ -75,17 +76,11 @@ class PartStore {
   static String keyFor(String relativePath) =>
       sha256Hex(utf8.encode(relativePath));
 
-  static File partFile(String root, String relativePath) => File(p.join(
-        root,
-        AppConstants.partDirName,
-        '${keyFor(relativePath)}.part',
-      ));
+  static SafeFile partFile(String root, String relativePath) => SafeFile(
+      root, '${AppConstants.partDirName}/${keyFor(relativePath)}.part');
 
-  static File metaFile(String root, String relativePath) => File(p.join(
-        root,
-        AppConstants.partDirName,
-        '${keyFor(relativePath)}.meta',
-      ));
+  static SafeFile metaFile(String root, String relativePath) => SafeFile(
+      root, '${AppConstants.partDirName}/${keyFor(relativePath)}.meta');
 
   static Future<PartMeta?> readMeta(String root, String relativePath) async {
     try {
@@ -156,20 +151,21 @@ class PartStore {
 
   /// 服务启动时清理超过保留期的分片与元数据。
   static Future<void> cleanup(String root) => _withDirectory(root, () async {
-        final dir = Directory(p.join(root, AppConstants.partDirName));
+        final dir = SafeDirectory(root, AppConstants.partDirName);
         if (!await dir.exists()) return;
         final cutoff = DateTime.now()
             .subtract(AppConstants.partRetention)
             .millisecondsSinceEpoch;
         try {
-          await for (final entity in dir.list(followLinks: false)) {
-            if (entity is! File) continue;
+          for (final entity in dir.children()) {
+            if (entity is! SafeFile) continue;
             final name = p.basename(entity.path);
             if (!name.endsWith('.part') && !name.endsWith('.meta')) continue;
             try {
-              final stat = await entity.stat();
-              if (stat.modified.millisecondsSinceEpoch < cutoff) {
-                await entity.delete();
+              final safe = SafeFile(root, '${AppConstants.partDirName}/$name');
+              final (_, modified) = await safe.metadata();
+              if (modified < cutoff) {
+                await safe.delete();
               }
             } catch (_) {}
           }
